@@ -1,0 +1,92 @@
+{
+  "provider": "codex",
+  "version": "codex-cli 0.172.0",
+  "observed_at_local": "2026-11-25",
+  "timezone": "America/Argentina/Buenos_Aires",
+  "platform": "Linux x86_64",
+  "anonymization": {
+    "thread_id": "UUID real reemplazado de forma consistente en ambos turnos",
+    "other_changes": "Ninguno en los eventos; prompts sintéticos y sin uso de herramientas"
+  },
+  "cwd": "Directorio temporal vacío; mismo directorio en ambos turnos",
+  "turns": [
+    {
+      "stdout": "turn-1.jsonl",
+      "stderr": "turn-1.stderr.txt",
+      "exit_code": 0,
+      "argv": [
+        "codex",
+        "-a",
+        "never",
+        "exec",
+        "--ignore-user-config",
+        "--sandbox",
+        "read-only",
+        "--json",
+        "--skip-git-repo-check",
+        "--cd",
+        "<TEMP_CWD>",
+        "No uses herramientas ni leas archivos. Recordá el marcador ORCH-1A-7F3C para el próximo turno de esta conversación. Respondé únicamente OK."
+      ]
+    },
+    {
+      "stdout": "turn-2.jsonl",
+      "stderr": "turn-2.stderr.txt",
+      "exit_code": 0,
+      "argv": [
+        "codex",
+        "-a",
+        "never",
+        "--sandbox",
+        "read-only",
+        "exec",
+        "resume",
+        "--ignore-user-config",
+        "--json",
+        "--skip-git-repo-check",
+        "<THREAD_ID_REAL_DEL_TURNO_1>",
+        "Sin usar herramientas ni leer archivos: ¿cuál era el marcador que te pedí recordar en el turno anterior? Respondé únicamente con ese marcador."
+      ]
+    }
+  ],
+  "failures": [
+    {
+      "name": "startup-readonly",
+      "stderr": "startup-readonly.stderr.txt",
+      "stdout": "",
+      "exit_code": 1,
+      "origin": "Estado local no escribible dentro del entorno restringido; fallo anterior a JSONL"
+    },
+    {
+      "name": "resume-invalid-option",
+      "stderr": "resume-invalid-option.stderr.txt",
+      "stdout": "",
+      "exit_code": 2,
+      "argv": [
+        "codex",
+        "exec",
+        "resume",
+        "--sandbox",
+        "read-only",
+        "00000000-0000-0000-0000-000000000000",
+        "unused"
+      ],
+      "origin": "Opción en posición no admitida; error de parsing CLI, sin llamada al modelo"
+    }
+  ],
+  "execution": {
+    "stdin": "DEVNULL",
+    "stdout_stderr": "Capturados por separado",
+    "timeout_seconds": 45,
+    "timed_out": false,
+    "success_environment": "Ejecución en el host autorizada tras fallo de escritura del entorno restringido"
+  },
+  "not_verified": [
+    "Enforcement de permisos con herramientas",
+    "Cwd observado mediante herramientas",
+    "Error del proveedor dentro de un turno",
+    "Deltas y ejecución de herramientas",
+    "Cancelación y descendientes",
+    "Cargo y rustc fuera del PATH examinado"
+  ]
+}

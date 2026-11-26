@@ -1,0 +1,33 @@
+name: Rust checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install verified Rust toolchain
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal --component rustfmt,clippy,llvm-tools-preview
+          rustup default 1.100.0
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Check
+        run: cargo check --locked
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --locked
+      - name: Install coverage tool
+        run: cargo install cargo-llvm-cov --locked --version 0.9.2
+      - name: Production line coverage >= 90%
+        run: cargo llvm-cov --locked --all-targets --ignore-filename-regex '(^|/)tests/' --fail-under-lines 90
