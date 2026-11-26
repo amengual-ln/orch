@@ -1,0 +1,215 @@
+{
+  "provider": "agy",
+  "version": "1.5.17",
+  "model": "gemini-3.8-flash-low",
+  "observed_at_local": "2026-11-26",
+  "timezone": "America/Argentina/Buenos_Aires",
+  "platform": "Linux x86_64",
+  "cwd": "/tmp/orch-agy-fixture/cwd",
+  "environment": "Capturas obtenidas con acceso al host autorizado; el entorno restringido bloquea el servidor TCP local de agy y sus logs",
+  "anonymization": [
+    "conversation_id reemplazados consistentemente por UUIDs ficticios",
+    "cwd temporal reemplazado por /tmp/orch-agy-fixture/cwd",
+    "JSON reserializado; resto de eventos y textos conservados"
+  ],
+  "cases": [
+    {
+      "name": "turn-1",
+      "argv": [
+        "agy",
+        "--model",
+        "gemini-3.8-flash-low",
+        "--mode",
+        "plan",
+        "--sandbox",
+        "--settings",
+        "{\"toolPermission\":\"strict\"}",
+        "--output-format",
+        "stream-json",
+        "--print-timeout",
+        "45s",
+        "--print",
+        "No uses herramientas ni leas archivos. Recordá el marcador ORCH-AGY-1A-9B2D para el próximo turno de esta conversación. Respondé únicamente OK."
+      ],
+      "cwd": "/tmp/orch-agy-fixture/cwd",
+      "stdout": "turn-1.jsonl",
+      "stderr": "turn-1.stderr.txt",
+      "exit_code": 0,
+      "timed_out": false,
+      "stdin": "DEVNULL"
+    },
+    {
+      "name": "turn-2",
+      "argv": [
+        "agy",
+        "--model",
+        "gemini-3.8-flash-low",
+        "--mode",
+        "plan",
+        "--sandbox",
+        "--settings",
+        "{\"toolPermission\":\"strict\"}",
+        "--output-format",
+        "stream-json",
+        "--print-timeout",
+        "45s",
+        "--conversation",
+        "00000000-0000-4000-8000-000000000001",
+        "--print",
+        "Sin usar herramientas ni leer archivos: ¿cuál era el marcador que te pedí recordar en el turno anterior? Respondé únicamente con ese marcador."
+      ],
+      "cwd": "/tmp/orch-agy-fixture/cwd",
+      "stdout": "turn-2.jsonl",
+      "stderr": "turn-2.stderr.txt",
+      "exit_code": 0,
+      "timed_out": false,
+      "stdin": "DEVNULL"
+    },
+    {
+      "name": "stream",
+      "argv": [
+        "agy",
+        "--model",
+        "gemini-3.8-flash-low",
+        "--mode",
+        "plan",
+        "--sandbox",
+        "--settings",
+        "{\"toolPermission\":\"strict\"}",
+        "--output-format",
+        "stream-json",
+        "--print-timeout",
+        "45s",
+        "--input-format",
+        "stream-json"
+      ],
+      "cwd": "/tmp/orch-agy-fixture/cwd",
+      "stdout": "stream.jsonl",
+      "stderr": "stream.stderr.txt",
+      "exit_code": 0,
+      "timed_out": false,
+      "observations": [
+        {
+          "status": "SUCCESS",
+          "alive_after_result": true
+        },
+        {
+          "status": "SUCCESS",
+          "alive_after_result": true
+        }
+      ],
+      "stdin_file": "stream.stdin.jsonl",
+      "sending": "Primer prompt con flush; esperar result antes de enviar el segundo; cerrar stdin tras el segundo result"
+    },
+    {
+      "name": "invalid-model",
+      "argv": [
+        "agy",
+        "--model",
+        "orch-nonexistent-model-1a",
+        "--mode",
+        "plan",
+        "--sandbox",
+        "--settings",
+        "{\"toolPermission\":\"strict\"}",
+        "--output-format",
+        "stream-json",
+        "--print-timeout",
+        "45s",
+        "--print",
+        "No uses herramientas. Respondé OK."
+      ],
+      "cwd": "/tmp/orch-agy-fixture/cwd",
+      "stdout": "invalid-model.jsonl",
+      "stderr": "invalid-model.stderr.txt",
+      "exit_code": 1,
+      "timed_out": false,
+      "stdin": "DEVNULL"
+    },
+    {
+      "name": "invalid-input",
+      "argv": [
+        "agy",
+        "--model",
+        "gemini-3.8-flash-low",
+        "--mode",
+        "plan",
+        "--sandbox",
+        "--settings",
+        "{\"toolPermission\":\"strict\"}",
+        "--output-format",
+        "stream-json",
+        "--print-timeout",
+        "45s",
+        "--input-format",
+        "stream-json"
+      ],
+      "cwd": "/tmp/orch-agy-fixture/cwd",
+      "stdout": "invalid-input.jsonl",
+      "stderr": "invalid-input.stderr.txt",
+      "exit_code": 1,
+      "timed_out": false,
+      "stdin": "{\"event\":\"user\",\"message\":{\"content\":[{\"type\":\"image\",\"data\":\"not-an-image\"}]}}\n"
+    },
+    {
+      "name": "permission-denied",
+      "argv": [
+        "agy",
+        "--model",
+        "gemini-3.8-flash-low",
+        "--mode",
+        "plan",
+        "--sandbox",
+        "--settings",
+        "{\"toolPermission\":\"strict\"}",
+        "--output-format",
+        "stream-json",
+        "--print-timeout",
+        "45s",
+        "--print",
+        "Usá exclusivamente run_command para ejecutar printf ORCH_PERMISSION_PROBE en el directorio actual. No leas ni escribas archivos, no uses otras herramientas y no pidas aprobación interactiva. Si el permiso se rechaza, informalo y no intentes otra vía."
+      ],
+      "cwd": "/tmp/orch-agy-fixture/cwd",
+      "stdout": "permission-denied.jsonl",
+      "stderr": "permission-denied.stderr.txt",
+      "exit_code": 0,
+      "timed_out": false,
+      "stdin": "DEVNULL"
+    },
+    {
+      "name": "plan-disabled",
+      "argv": [
+        "agy",
+        "--model",
+        "gemini-3.8-flash-low",
+        "--mode",
+        "plan",
+        "--sandbox",
+        "--settings",
+        "{\"toolPermission\":\"strict\"}",
+        "--output-format",
+        "stream-json",
+        "--print-timeout",
+        "45s",
+        "--disable-slash-commands",
+        "--print",
+        "No uses herramientas ni leas archivos. Recordá el marcador ORCH-AGY-1A-9B2D para el próximo turno de esta conversación. Respondé únicamente OK."
+      ],
+      "cwd": "/tmp/orch-agy-fixture/cwd",
+      "stdout": "plan-disabled.jsonl",
+      "stderr": "plan-disabled.stderr.txt",
+      "exit_code": 0,
+      "timed_out": false,
+      "stdin": "DEVNULL"
+    }
+  ],
+  "limitations": [
+    "No se probó escritura ni habilitación de herramientas",
+    "No se comprobó el aislamiento OS efectivo de --sandbox",
+    "No se probaron cancelación, timeout ni limpieza de descendientes",
+    "No se verificaron errores de red/autenticación durante generación",
+    "La lista de modelos depende de cuenta, fecha y servicio"
+  ],
+  "captures_note": "plan-disabled es la prueba inicial con warning por flags incompatibles, conservada por separado. Los turnos principales usan plan sin disable-slash-commands.",
+  "external_timeout_seconds": 60
+}

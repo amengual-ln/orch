@@ -1,0 +1,8 @@
+WARNING: proceeding, even though we could not create PATH aliases: Read-only file system (os error 30)
+error: unexpected argument '--sandbox' found
+
+  tip: to pass '--sandbox' as a value, use '-- --sandbox'
+
+Usage: codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]
+
+For more information, try '--help'.
