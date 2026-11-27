@@ -13,7 +13,7 @@ use orch::{
     agy::Agy,
     codex::Codex,
     events::{AgentEvent, Event},
-    runner::{TurnResult, validate_cwd},
+    session::{Runner, Session, Sessions},
 };
 use tokio::{
     signal::unix::{SignalKind, signal},
@@ -24,10 +24,11 @@ use tokio::{
 enum Provider {
     Codex,
     Agy,
+    Concurrent,
 }
 
 #[derive(Parser)]
-#[command(version, about = "Headless coding-agent runner (phase 1C)")]
+#[command(version, about = "Headless coding-agent session smoke tests")]
 struct Args {
     #[arg(long, value_enum)]
     smoke_test: Provider,
@@ -42,8 +43,11 @@ struct Args {
     #[arg(long, default_value = "agy")]
     agy_bin: PathBuf,
     /// Pin the model slug for both agy turns.
-    #[arg(long, required_if_eq("smoke_test", "agy"), value_parser = clap::builder::NonEmptyStringValueParser::new())]
+    #[arg(long, required_if_eq_any([("smoke_test", "agy"), ("smoke_test", "concurrent")]), value_parser = clap::builder::NonEmptyStringValueParser::new())]
     model: Option<String>,
+    /// agy working directory for the concurrent smoke test.
+    #[arg(long, required_if_eq("smoke_test", "concurrent"))]
+    agy_cwd: Option<PathBuf>,
 }
 
 fn logging() -> Result<()> {
@@ -66,26 +70,6 @@ fn logging() -> Result<()> {
     Ok(())
 }
 
-enum Runner {
-    Codex(Codex),
-    Agy(Agy),
-}
-
-impl Runner {
-    async fn turn(
-        &self,
-        prompt: &str,
-        resume: Option<&str>,
-        cancel: &mut watch::Receiver<bool>,
-        emit: impl FnMut(AgentEvent) -> Result<()>,
-    ) -> Result<TurnResult> {
-        match self {
-            Self::Codex(runner) => runner.turn(prompt, resume, cancel, emit).await,
-            Self::Agy(runner) => runner.turn(prompt, resume, cancel, emit).await,
-        }
-    }
-}
-
 fn resolve_executable(path: PathBuf, flag: &str) -> Result<PathBuf> {
     if path.is_absolute()
         || path
@@ -99,63 +83,135 @@ fn resolve_executable(path: PathBuf, flag: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-async fn smoke(args: Args, cancel: &mut watch::Receiver<bool>) -> Result<()> {
-    let cwd = validate_cwd(&args.cwd)?;
-    let timeout = Duration::from_secs(args.timeout_secs);
-    let runner = match args.smoke_test {
-        Provider::Codex => Runner::Codex(Codex {
-            executable: resolve_executable(args.codex_bin, "--codex-bin")?,
-            cwd,
-            timeout,
-        }),
-        Provider::Agy => Runner::Agy(Agy {
-            executable: resolve_executable(args.agy_bin, "--agy-bin")?,
-            cwd,
-            timeout,
-            model: args.model.context("--smoke-test agy requires --model")?,
-        }),
-    };
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let session_id = format!("smoke-{}-{stamp}", std::process::id());
-    let marker = format!("ORCH_SMOKE_{}_{stamp}", std::process::id());
+fn emit(session_id: &str, turn_id: u64, payload: AgentEvent) -> Result<()> {
     let mut stdout = io::stdout().lock();
-    let mut send = |turn_id, payload| -> Result<()> {
-        serde_json::to_writer(
-            &mut stdout,
-            &Event {
-                session_id: &session_id,
-                turn_id,
-                payload,
-            },
-        )?;
-        stdout.write_all(b"\n")?;
-        stdout.flush()?;
-        Ok(())
-    };
-    let first = runner.turn(
-        &format!("No uses herramientas ni leas archivos. Recordá el marcador {marker} para el próximo turno de esta conversación. Respondé únicamente OK."),
-        None, cancel, |event| send(1, event),
+    serde_json::to_writer(
+        &mut stdout,
+        &Event {
+            session_id,
+            turn_id,
+            payload,
+        },
+    )?;
+    stdout.write_all(b"\n")?;
+    stdout.flush()?;
+    Ok(())
+}
+
+async fn smoke_turn(
+    session: &mut Session,
+    prompt: String,
+    cancel: &mut watch::Receiver<bool>,
+) -> Result<String> {
+    ensure!(!*cancel.borrow(), "smoke test cancelled");
+    let turn_id = session.send_turn(prompt).await?;
+    let mut seen = 0;
+    let mut stopping = false;
+    loop {
+        let events = session
+            .inspect(|snapshot| {
+                snapshot
+                    .history
+                    .last()
+                    .map(|turn| turn.events[seen..].to_vec())
+            })
+            .context("accepted turn is missing from history")?;
+        seen += events.len();
+        for event in events {
+            emit(session.id(), turn_id, event.clone())?;
+            match event {
+                AgentEvent::TurnCompleted { final_text } => return Ok(final_text),
+                AgentEvent::TurnFailed { message, .. } => anyhow::bail!(message),
+                AgentEvent::TurnCancelled => anyhow::bail!("turn cancelled"),
+                _ => {}
+            }
+        }
+        tokio::select! {
+            result = session.changed() => result?,
+            _ = cancel.wait_for(|value| *value), if !stopping => {
+                stopping = true;
+                session.close();
+            }
+        }
+    }
+}
+
+async fn smoke_session(
+    mut session: Session,
+    stamp: u128,
+    mut cancel: watch::Receiver<bool>,
+) -> Result<()> {
+    let marker = format!("ORCH_SMOKE_{}_{stamp}", std::process::id());
+    let first = smoke_turn(
+        &mut session,
+        format!("No uses herramientas ni leas archivos. Recordá el marcador {marker} para el próximo turno de esta conversación. Respondé únicamente OK."),
+        &mut cancel,
+    ).await?;
+    ensure!(first.trim() == "OK", "first smoke response was not OK");
+    let second = smoke_turn(
+        &mut session,
+        "Sin usar herramientas ni leer archivos: ¿cuál era el marcador que te pedí recordar en el turno anterior? Respondé únicamente con ese marcador.".into(),
+        &mut cancel,
     ).await?;
     ensure!(
-        first.final_text.trim() == "OK",
-        "first smoke response was not OK"
-    );
-    let second = runner.turn(
-        "Sin usar herramientas ni leer archivos: ¿cuál era el marcador que te pedí recordar en el turno anterior? Respondé únicamente con ese marcador.",
-        Some(&first.provider_session_id), cancel, |event| send(2, event),
-    ).await?;
-    ensure!(
-        second.final_text.trim() == marker,
+        second.trim() == marker,
         "resumed conversation did not recall the marker"
     );
     tracing::info!("two-turn smoke test passed");
     Ok(())
 }
 
+async fn smoke(args: Args, cancel: watch::Receiver<bool>) -> Result<()> {
+    let timeout = Duration::from_secs(args.timeout_secs);
+    let codex = || -> Result<Runner> {
+        Ok(Runner::Codex(Codex {
+            executable: resolve_executable(args.codex_bin, "--codex-bin")?,
+            cwd: args.cwd.clone(),
+            timeout,
+        }))
+    };
+    let agy = |cwd| -> Result<Runner> {
+        Ok(Runner::Agy(Agy {
+            executable: resolve_executable(args.agy_bin, "--agy-bin")?,
+            cwd,
+            timeout,
+            model: args.model.context("--smoke-test agy requires --model")?,
+        }))
+    };
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let mut sessions = Sessions::default();
+    let result = match args.smoke_test {
+        Provider::Codex => smoke_session(sessions.create("codex", codex()?)?, stamp, cancel).await,
+        Provider::Agy => {
+            smoke_session(sessions.create("agy", agy(args.cwd)?)?, stamp, cancel).await
+        }
+        Provider::Concurrent => {
+            let codex = sessions.create("codex", codex()?)?;
+            let agy = sessions.create(
+                "agy",
+                agy(args.agy_cwd.context("concurrent smoke needs --agy-cwd")?)?,
+            )?;
+            ensure!(
+                codex.cwd() != agy.cwd(),
+                "concurrent smoke needs two distinct working directories"
+            );
+            let (codex, agy) = tokio::join!(
+                smoke_session(codex, stamp, cancel.clone()),
+                smoke_session(agy, stamp + 1, cancel),
+            );
+            codex
+                .context("Codex smoke failed")
+                .and(agy.context("agy smoke failed"))
+        }
+    };
+    let shutdown = sessions.shutdown().await;
+    shutdown.and(result)
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let args = Args::parse();
-    let (sender, mut cancel) = watch::channel(false);
+    let (sender, cancel) = watch::channel(false);
     let result = async {
         logging()?;
         let mut interrupt = signal(SignalKind::interrupt())?;
@@ -166,7 +222,7 @@ async fn main() -> ExitCode {
             tracing::info!("shutdown signal received");
             let _ = sender.send(true);
         });
-        let result = smoke(args, &mut cancel).await;
+        let result = smoke(args, cancel.clone()).await;
         monitor.abort();
         result
     }

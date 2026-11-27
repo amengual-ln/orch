@@ -2,7 +2,7 @@
 
 Orquestador de agentes de código locales, orientado a una TUI manejada desde el teclado. El alcance y las fases están en [PLAN.md](PLAN.md).
 
-**Estado: 1C verificada.** La CLI headless permite probar dos turnos de Codex o de agy/Gemini.
+**Estado: fase 2.** Orch controla sesiones independientes de Codex y agy/Gemini. La CLI permite verificar ambos proveedores en paralelo.
 
 ## Requisitos
 
@@ -11,15 +11,11 @@ Orquestador de agentes de código locales, orientado a una TUI manejada desde el
 - Python 3 para las pruebas offline de procesos, usando solo su biblioteca estándar.
 - Para los smoke tests reales: Codex o agy instalado, autenticación válida, acceso al servicio y directorio de estado local escribible. Se verificó con `codex-cli 0.172.0` y `agy 1.5.17`.
 
-Durante 1B se instaló el toolchain oficial mínimo más rustfmt/Clippy en `/tmp/orch-rust`, sin modificar perfiles de shell. Para usar esa instalación temporal en esta máquina:
+Con rustup podés instalar la misma versión que usa CI y sus componentes de desarrollo:
 
 ```sh
-export CARGO_HOME=/tmp/orch-rust/cargo
-export RUSTUP_HOME=/tmp/orch-rust/rustup
-export PATH="/tmp/orch-rust/cargo/bin:$PATH"
+rustup toolchain install 1.100.0 --component rustfmt,clippy,llvm-tools-preview
 ```
-
-Si ya tenés Rust instalado normalmente, no necesitás esas variables. La instalación en `/tmp` puede desaparecer; los requisitos permanentes son los de arriba.
 
 ## Compilar y verificar
 
@@ -40,7 +36,7 @@ cargo install cargo-llvm-cov --locked --version 0.9.2
 cargo llvm-cov --locked --all-targets --ignore-filename-regex '(^|/)tests/' --fail-under-lines 90
 ```
 
-Medición del 27 de noviembre de 2026: **95,77%** (634 de 662 líneas), con **18 tests offline** en Linux. La suite cubre los protocolos de ambos proveedores, los rechazos de agy con exit code 0, los límites de salida y la limpieza de procesos controlados. La cobertura de líneas no mide por sí sola todas las combinaciones de ramas o carreras.
+Medición del 27 de noviembre de 2026: **94,90%** (930 de 980 líneas), con **24 tests offline** en Linux. La suite cubre los protocolos de ambos proveedores, los rechazos de agy con exit code 0, la concurrencia, la cancelación selectiva y los límites del historial. La cobertura de líneas no mide por sí sola todas las combinaciones de ramas o carreras.
 
 [El workflow](.github/workflows/ci.yml) prepara Rust 1.100.0 y ejecuta formato, check, Clippy, tests y el umbral de cobertura en pushes y pull requests. Los comandos se verificaron localmente en el host; los resultados de cada ejecución remota se consultan en GitHub Actions y en el PR correspondiente.
 
@@ -70,7 +66,16 @@ cargo run --locked -- --smoke-test agy --model gemini-3.8-flash-low --cwd /ruta/
 
 `--agy-bin` permite elegir otra instalación. orch repite el modelo en ambos turnos y reanuda con `--conversation <id>`. Usa `--print`, `--output-format stream-json`, `--mode plan`, `--sandbox` y `toolPermission: strict`. El runner verifica el ID, el modelo, el cwd y el modo de permisos declarados por `agy`. El aislamiento efectivo de su sandbox y la política de ediciones quedan pendientes de verificación.
 
-Cada smoke test hace dos llamadas reales y puede consumir cuota:
+Para verificar el controlador, creá dos directorios y ejecutá las dos sesiones en paralelo:
+
+```sh
+prueba=$(mktemp -d)
+mkdir "$prueba/codex" "$prueba/agy"
+cargo run --locked -- --smoke-test concurrent \
+  --cwd "$prueba/codex" --agy-cwd "$prueba/agy" --model gemini-3.8-flash-low
+```
+
+Cada sesión del smoke test hace dos llamadas reales y puede consumir cuota:
 
 1. Abre una conversación, pide recordar un marcador único y responder `OK`.
 2. Reanuda por el ID explícito y pide recuperar el marcador, sin incluirlo en el segundo prompt.
@@ -93,6 +98,12 @@ El runner confirma fin de protocolo, identidad de la conversación y exit code 0
 - Los errores de argumentos los informa clap con exit code 2.
 
 Los diagnósticos de la CLI van a stderr; los logs operativos se escriben en `.orch/orch.log` **relativo al cwd de arranque de orch**, no al proyecto de la sesión. Los logs no guardan prompts ni líneas crudas del proveedor. Los archivos nuevos de log tienen permisos 0600 y el directorio nuevo 0700; ambos están ignorados por Git junto con `target/`.
+
+## Control de sesiones
+
+`Sessions` valida alias únicos y directorios de trabajo accesibles. Cada sesión acepta un turno activo. `send_turn` devuelve `Busy` si ya hay uno en ejecución o cancelación. `cancel` afecta a esa sesión y conserva el ID del proveedor. Tras un fallo, el próximo turno explícito vuelve a usar ese ID. `shutdown` señala todas las sesiones y espera su cierre bajo un plazo común de cinco segundos.
+
+Cada sesión conserva el historial en memoria, incluidos los prompts, los eventos y el resultado terminal por turno. Las notificaciones de cambio pueden agruparse y el lector puede recuperar los eventos desde el historial. Los límites son 64 KiB por prompt, 8 MiB de eventos de contenido por turno y un presupuesto de 32 MiB por sesión. El controlador reserva espacio para el resultado terminal antes de aceptar un turno.
 
 ## Procesos y límites actuales
 
