@@ -10,8 +10,10 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use clap::{Parser, ValueEnum};
 use orch::{
-    codex::{Codex, validate_cwd},
-    events::Event,
+    agy::Agy,
+    codex::Codex,
+    events::{AgentEvent, Event},
+    runner::{TurnResult, validate_cwd},
 };
 use tokio::{
     signal::unix::{SignalKind, signal},
@@ -21,10 +23,11 @@ use tokio::{
 #[derive(Clone, ValueEnum)]
 enum Provider {
     Codex,
+    Agy,
 }
 
 #[derive(Parser)]
-#[command(version, about = "Headless coding-agent runner (phase 1B)")]
+#[command(version, about = "Headless coding-agent runner (phase 1C)")]
 struct Args {
     #[arg(long, value_enum)]
     smoke_test: Provider,
@@ -35,6 +38,12 @@ struct Args {
     /// Override the executable, useful for a pinned CLI installation.
     #[arg(long, default_value = "codex")]
     codex_bin: PathBuf,
+    /// Override the agy executable.
+    #[arg(long, default_value = "agy")]
+    agy_bin: PathBuf,
+    /// Pin the model slug for both agy turns.
+    #[arg(long, required_if_eq("smoke_test", "agy"), value_parser = clap::builder::NonEmptyStringValueParser::new())]
+    model: Option<String>,
 }
 
 fn logging() -> Result<()> {
@@ -57,19 +66,54 @@ fn logging() -> Result<()> {
     Ok(())
 }
 
+enum Runner {
+    Codex(Codex),
+    Agy(Agy),
+}
+
+impl Runner {
+    async fn turn(
+        &self,
+        prompt: &str,
+        resume: Option<&str>,
+        cancel: &mut watch::Receiver<bool>,
+        emit: impl FnMut(AgentEvent) -> Result<()>,
+    ) -> Result<TurnResult> {
+        match self {
+            Self::Codex(runner) => runner.turn(prompt, resume, cancel, emit).await,
+            Self::Agy(runner) => runner.turn(prompt, resume, cancel, emit).await,
+        }
+    }
+}
+
+fn resolve_executable(path: PathBuf, flag: &str) -> Result<PathBuf> {
+    if path.is_absolute()
+        || path
+            .parent()
+            .is_some_and(|parent| !parent.as_os_str().is_empty())
+    {
+        return path
+            .canonicalize()
+            .with_context(|| format!("invalid {flag} path"));
+    }
+    Ok(path)
+}
+
 async fn smoke(args: Args, cancel: &mut watch::Receiver<bool>) -> Result<()> {
     let cwd = validate_cwd(&args.cwd)?;
-    let executable = if args.codex_bin.components().count() > 1 {
-        args.codex_bin
-            .canonicalize()
-            .context("invalid --codex-bin path")?
-    } else {
-        args.codex_bin
-    };
-    let runner = Codex {
-        executable,
-        cwd,
-        timeout: Duration::from_secs(args.timeout_secs),
+    let timeout = Duration::from_secs(args.timeout_secs);
+    let runner = match args.smoke_test {
+        Provider::Codex => Runner::Codex(Codex {
+            executable: resolve_executable(args.codex_bin, "--codex-bin")?,
+            cwd,
+            timeout,
+        }),
+        Provider::Agy => Runner::Agy(Agy {
+            executable: resolve_executable(args.agy_bin, "--agy-bin")?,
+            cwd,
+            timeout,
+            model: args.model.context("--smoke-test agy requires --model")?,
+        }),
     };
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let session_id = format!("smoke-{}-{stamp}", std::process::id());

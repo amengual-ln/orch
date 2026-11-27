@@ -1,16 +1,15 @@
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{path::PathBuf, time::Duration};
 
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use serde_json::Value;
 use tokio::{process::Command, sync::watch};
 
 use crate::{
     events::{AgentEvent, FailureKind},
-    process::{self, Stop},
+    runner::{self, TurnParser},
 };
+
+pub use crate::runner::{TurnResult, validate_cwd};
 
 const MAX_TEXT: usize = 4 * 1024 * 1024;
 
@@ -163,25 +162,20 @@ impl Parser {
     }
 }
 
-#[derive(Debug)]
-pub struct TurnResult {
-    pub provider_session_id: String,
-    pub final_text: String,
+impl TurnParser for Parser {
+    fn line(&mut self, bytes: &[u8]) -> Vec<AgentEvent> {
+        Parser::line(self, bytes)
+    }
+
+    fn finish(self, expected_id: Option<&str>) -> Result<TurnResult, runner::TurnFailure> {
+        Parser::finish(&self, expected_id)
+    }
 }
 
 pub struct Codex {
     pub executable: PathBuf,
     pub cwd: PathBuf,
     pub timeout: Duration,
-}
-
-pub fn validate_cwd(path: &Path) -> Result<PathBuf> {
-    let cwd = path
-        .canonicalize()
-        .with_context(|| format!("invalid cwd: {}", path.display()))?;
-    anyhow::ensure!(cwd.is_dir(), "cwd is not a directory: {}", cwd.display());
-    std::fs::read_dir(&cwd).with_context(|| format!("cwd is not accessible: {}", cwd.display()))?;
-    Ok(cwd)
 }
 
 impl Codex {
@@ -206,76 +200,20 @@ impl Codex {
         prompt: &str,
         resume: Option<&str>,
         cancel: &mut watch::Receiver<bool>,
-        mut emit: impl FnMut(AgentEvent) -> Result<()>,
+        emit: impl FnMut(AgentEvent) -> Result<()>,
     ) -> Result<TurnResult> {
-        emit(AgentEvent::TurnStarted)?;
-        let mut parser = Parser::default();
-        let outcome = async {
-            let cwd =
-                validate_cwd(&self.cwd).map_err(|e| (FailureKind::Configuration, e.to_string()))?;
-            let mut command = self.command(prompt, resume);
-            command.current_dir(cwd);
-            process::run(&mut command, self.timeout, cancel, |line| {
-                for event in parser.line(line) {
-                    emit(event)?;
-                }
-                Ok(())
-            })
-            .await
-            .map_err(|e| {
-                (
-                    FailureKind::Process,
-                    format!("{}: {e:#}", self.executable.display()),
-                )
-            })
-        }
-        .await;
-        let terminal = match outcome {
-            Err(failure) => Err(failure),
-            Ok(output) => match output.stop {
-                Stop::Cancelled => {
-                    emit(AgentEvent::TurnCancelled)?;
-                    bail!("turn cancelled");
-                }
-                stop => {
-                    let failure = match stop {
-                        Stop::Timeout => Some((FailureKind::Timeout, "turn timed out".into())),
-                        Stop::Io(message) => Some((FailureKind::Io, message)),
-                        _ if !output.status.success() => Some((
-                            FailureKind::Process,
-                            format!("provider exited with {}", output.status),
-                        )),
-                        _ => None,
-                    };
-                    let result = match failure {
-                        Some(failure) => Err(failure),
-                        None => parser.finish(resume),
-                    };
-                    result.map_err(|(kind, mut message)| {
-                        if !output.stderr.is_empty() {
-                            message.push_str("; stderr (last 16 KiB): ");
-                            message.push_str(&output.stderr);
-                        }
-                        (kind, message)
-                    })
-                }
+        runner::turn(
+            &self.cwd,
+            self.timeout,
+            cancel,
+            |cwd| {
+                let mut command = self.command(prompt, resume);
+                command.current_dir(cwd);
+                (command, Parser::default())
             },
-        };
-        match terminal {
-            Ok(result) => {
-                emit(AgentEvent::TurnCompleted {
-                    final_text: result.final_text.clone(),
-                })?;
-                Ok(result)
-            }
-            Err((kind, message)) => {
-                tracing::warn!(failure_kind = ?kind, "turn failed");
-                emit(AgentEvent::TurnFailed {
-                    kind,
-                    message: message.clone(),
-                })?;
-                bail!(message)
-            }
-        }
+            resume,
+            emit,
+        )
+        .await
     }
 }

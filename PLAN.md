@@ -136,14 +136,16 @@ Resultado 1B (2026-11-26): proyecto Cargo edición 2024 y Rust mínimo verificad
 
 #### 1C. Agregar agy/Gemini como segundo runner
 
-- [ ] Después de validar 1B, implementar el parser agy sobre las fixtures 1A-agy y extraer el contrato mínimo común con Codex.
-- [ ] Agregar `--smoke-test agy --model <slug> --cwd <ruta>`; mantener `--smoke-test codex`. Fijar el modelo explícitamente en las pruebas de Gemini y repetirlo al reanudar.
-- [ ] Ejecutar un proceso por turno con `--print`, `--output-format stream-json` y `--conversation <id>` para continuar; usar el cwd del proceso, no `--project` como sustituto.
-- [ ] Mantener las opciones de sesión verificadas (`--mode plan --sandbox --settings '{"toolPermission":"strict"}'`) durante las pruebas iniciales; no activar auto/accept-edits ni bypass para evitar rechazos. Separar rechazo de permisos de fallos de protocolo.
-- [ ] Probar errores sin `init`/ID, `step_update` incremental, texto final sin duplicación, `denied_actions` y exit codes no exitosos. Verificar cwd/modelo/permisos declarados en `init`.
-- [ ] Aplicar al runner agy los controles de timeout, cancelación y recolección de procesos de 1B, considerando el servidor local que inicia el CLI. No dar por probada la limpieza por observar que salió el proceso principal.
+- [x] Después de validar 1B, implementar el parser agy sobre las fixtures 1A-agy y extraer el contrato mínimo común con Codex.
+- [x] Agregar `--smoke-test agy --model <slug> --cwd <ruta>`; mantener `--smoke-test codex`. Fijar el modelo explícitamente en las pruebas de Gemini y repetirlo al reanudar.
+- [x] Ejecutar un proceso por turno con `--print`, `--output-format stream-json` y `--conversation <id>` para continuar; usar el cwd del proceso, no `--project` como sustituto.
+- [x] Mantener las opciones de sesión verificadas (`--mode plan --sandbox --settings '{"toolPermission":"strict"}'`) durante las pruebas iniciales; no activar auto/accept-edits ni bypass para evitar rechazos. Separar rechazo de permisos de fallos de protocolo.
+- [x] Probar errores sin `init`/ID, `step_update` incremental, texto final sin duplicación, `denied_actions` y exit codes no exitosos. Verificar cwd/modelo/permisos declarados en `init`.
+- [x] Aplicar al runner agy los controles de timeout, cancelación y recolección de procesos de 1B, considerando el servidor local que inicia el CLI. No dar por probada la limpieza por observar que salió el proceso principal.
 
 **Aceptación 1C:** ambos smoke tests reales conservan conversación y cwd; agy usa el Gemini solicitado. Las pruebas offline distinguen éxito, error y permisos denegados sin duplicar respuestas. Pasan `cargo check` y `cargo test`. Las pruebas de ediciones se habilitan solo después de verificar una política específica para cada proveedor.
+
+Resultado 1C (2026-11-27): ambos smoke tests reales completaron dos turnos, recuperaron el marcador y mantuvieron el ID. El cwd se comprobó mediante `/proc` en los cuatro lanzamientos, y agy confirmó `gemini-3.8-flash-low` y permisos `strict`. En el primer intento ambos turnos iniciales vencieron. agy informó `trajectory not found` y dejó un proceso en otro grupo fuera de la limpieza de orch. Las pruebas offline de señales verifican el hijo directo y el descendiente controlado de ambos runners. Ver [README](README.md).
 
 ### Fase 2 — Control de sesiones concurrentes
 
@@ -242,11 +244,11 @@ Inicializar idempotentemente `~/.orch/shared/` con `mcp.json`, `memory/` y `skil
 
 ## 5. Reglas de ejecución y verificación
 
-Las reglas permanentes y los comandos de calidad están en [AGENTS.md](AGENTS.md). Umbral automatizado: 90% de cobertura de líneas de producción, además de pruebas explícitas para todos los flujos críticos. Estado tras ampliar regresiones: 14 tests offline, 94,75% de líneas cubiertas (2026-11-26); ver [CI](.github/workflows/ci.yml). La medición excluye solo el código de tests, no módulos de producción.
+Las reglas permanentes y los comandos de calidad están en [AGENTS.md](AGENTS.md). Umbral automatizado: 90% de cobertura de líneas de producción, además de pruebas explícitas para todos los flujos críticos. Estado tras 1C: 18 tests offline, 95,77% de líneas cubiertas (2026-11-27); ver [CI](.github/workflows/ci.yml). La medición excluye solo el código de tests, no módulos de producción.
 
 
 - Completar y verificar cada fase inicial antes de avanzar; el roadmap posterior puede reordenarse según uso real. Actualizar este archivo con decisiones y resultados concretos.
-- 1A Codex, 1A-agy y 1B completadas; la siguiente etapa es 1C agy/Gemini. No iniciar controlador concurrente ni TUI antes de validar ambos runners.
+- 1A Codex, 1A-agy, 1B y 1C completadas. La fase 2 corresponde al controlador concurrente.
 - No usar `unwrap()` en producción. Errores del proveedor, eventos nuevos y stdout inválido no deben causar panic ni éxito silencioso.
 - Nunca usar `println!`/`eprintln!` con la TUI activa; usar tracing en archivo. La CLI headless sí puede imprimir eventos normalizados.
 - Dejar pruebas pequeñas y deterministas para parsing, transiciones y ciclo de vida de procesos. Usar mocks/procesos controlados donde permitan reproducir fallos; evitar suites que solo repitan la implementación.
