@@ -164,12 +164,20 @@ async fn cli_interrupt_and_terminate_cancel_and_clean_children() {
         unistd::Pid,
     };
     use tokio::time::{sleep, timeout};
-    for signal in [Signal::SIGINT, Signal::SIGTERM] {
+    for (provider, signal) in ["codex", "agy"]
+        .into_iter()
+        .flat_map(|provider| [Signal::SIGINT, Signal::SIGTERM].map(|signal| (provider, signal)))
+    {
         let dir = tempfile::tempdir().expect("tempdir");
         let exe = executable(dir.path());
         let records = dir.path().join("pids.json");
-        let child = Command::new(env!("CARGO_BIN_EXE_orch"))
-            .args(["--smoke-test", "codex", "--codex-bin"])
+        let mut command = Command::new(env!("CARGO_BIN_EXE_orch"));
+        command.args(["--smoke-test", provider]);
+        if provider == "agy" {
+            command.args(["--model", "gemini-3.8-flash-low"]);
+        }
+        let child = command
+            .arg(format!("--{provider}-bin"))
             .arg(exe)
             .env("ORCH_FAKE_CASE", "cancel")
             .env("ORCH_FAKE_PIDS", &records)
@@ -257,7 +265,8 @@ async fn a_failing_event_consumer_cannot_produce_a_successful_turn() {
         .await;
     assert!(result.is_err());
     assert!(
-        matches!(events.last(), Some(AgentEvent::TurnFailed { kind: orch::events::FailureKind::Io, message }) if message.contains("event consumer closed"))
+        matches!(events.last(), Some(AgentEvent::TurnFailed { kind: orch::events::FailureKind::Io, message }) if message.contains("event consumer closed")),
+        "{result:?}, {events:?}"
     );
     assert!(
         !events

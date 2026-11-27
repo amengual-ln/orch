@@ -45,6 +45,38 @@ if case == 'auth-failure':
     print('authentication required: run codex login', file=sys.stderr)
     sys.exit(1)
 
+model = next((arg.removeprefix('--model=') for arg in sys.argv if arg.startswith('--model=')), None)
+if model is not None:
+    # Synthetic agy process, using sanitized real captures when supplied.
+    if fixture := os.environ.get('ORCH_FAKE_AGY_FIXTURE'):
+        for line in Path(fixture).read_text().splitlines():
+            value = json.loads(line)
+            if value['event'] == 'init' and value['init']['cwd'] == '/tmp/orch-agy-fixture/cwd':
+                value['init']['cwd'] = os.getcwd()
+            print(json.dumps(value), flush=True)
+        sys.exit(int(os.environ.get('ORCH_FAKE_EXIT', '0')))
+
+    def agy_event(kind, **fields):
+        print(json.dumps({'event': kind, **fields}), flush=True)
+
+    resuming = any(arg.startswith('--conversation=') for arg in sys.argv)
+    conversation_id = 'fixture-agy'
+    agy_event('init', conversation_id=conversation_id, init={
+        'model': model, 'cwd': os.getcwd(), 'permission_mode': 'strict',
+    })
+    prompt = sys.argv[-1]
+    marker = re.search(r'ORCH_SMOKE_\d+_\d+', prompt)
+    state = Path('.fake-agy-context')
+    if marker:
+        state.write_text(marker.group())
+    text = state.read_text() if resuming else 'OK'
+    agy_event('step_update', step_update={
+        'conversation_id': conversation_id, 'step_index': 1, 'step_type': 'agent_response',
+        'state': 'DONE', 'text_delta': text,
+    })
+    agy_event('result', result={'conversation_id': conversation_id, 'status': 'SUCCESS', 'response': text})
+    sys.exit(0)
+
 resuming = 'resume' in sys.argv
 thread = 'different-thread' if case == 'wrong-thread' and resuming else 'fixture-thread'
 event('thread.started', thread_id=thread)

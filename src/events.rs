@@ -9,6 +9,7 @@ pub enum FailureKind {
     Process,
     Protocol,
     Provider,
+    Permission,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -16,6 +17,7 @@ pub enum FailureKind {
 pub enum AgentEvent {
     TurnStarted,
     SessionInitialized { provider_session_id: String },
+    TextDelta { message_id: String, text: String },
     MessageCompleted { message_id: String, text: String },
     TurnCompleted { final_text: String },
     TurnFailed { kind: FailureKind, message: String },
