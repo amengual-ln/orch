@@ -348,7 +348,8 @@ pub async fn run(options: Options, mut signal: watch::Receiver<bool>) -> Result<
                 dirty |= conversation.refresh().await;
             }
             for _ in 0..32 {
-                if !event::poll(Duration::ZERO)? {
+                // The Unix poll backend preserves keyboard readiness alongside SIGWINCH.
+                if !event::poll(Duration::from_millis(1))? {
                     break;
                 }
                 dirty = true;

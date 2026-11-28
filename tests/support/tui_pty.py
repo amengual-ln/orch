@@ -185,8 +185,10 @@ def flow(binary, root):
         assert "--model=fixture-codex" in first["args"]
         assert first["cwd"] == str(codex)
         term.expect(0, "LINE-49")
+        # Put resize readiness first while input also waits in the descriptor.
+        mark = term.resize(102, 24)
         term.send(b"\x15" * 9)
-        term.expect(term.resize(102, 24), "LINE-00")
+        term.expect(mark, "LINE-00")
         term.expect(term.send(b"icodex draft"), "codex draft")
         term.expect(term.send(b"\x1b"), "NORMAL")
 
