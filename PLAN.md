@@ -168,25 +168,23 @@ Resultado fase 2 (2026-11-27): el smoke test `--smoke-test concurrent` completó
 Objetivo: completar el flujo diario básico desde el teclado con Codex y agy/Gemini.
 
 - [x] Agregar `ratatui` y `crossterm`; integrar teclado y eventos de sesiones sin bloquear el renderizado ni la entrada.
-- [x] Layout inicial: lista de sesiones a la izquierda, conversación e input a la derecha, barra de estado con modo, estado y atajos. Mostrar alias, proveedor y cwd; ajustar el layout ante resize y terminales pequeñas.
-- [x] Implementar modos `NORMAL` e `INSERT` y un modal de creación de sesión.
+- [x] Layout inicial: lista de sesiones a la izquierda, conversación e input a la derecha, barra de estado con atajos y un indicador de respuesta activa. Mostrar alias, proveedor y cwd; ajustar el layout ante resize y terminales pequeñas.
+- [x] Mantener el campo de mensaje listo para escribir y un modal de creación de sesión.
 - [x] Conservar borrador y posición de scroll al alternar sesiones. Seguir la salida nueva solo si el usuario está al final del historial.
-- [x] Mostrar errores y cancelaciones en la conversación; mantener accesible el input para recuperación.
+- [x] Diferenciar los mensajes por el fondo y mostrar errores y cancelaciones en la conversación; mantener accesible el input para recuperación.
 - [x] Manejar raw mode y pantalla alternativa mediante una guarda de restauración, incluso ante inicialización parcial, errores y panic. Apagar procesos mediante la ruta común de cierre.
 
 Atajos del MVP:
 
 | Tecla | Acción |
 | --- | --- |
-| `i` o `Enter` en NORMAL | Entrar a INSERT |
-| `Enter` en INSERT | Enviar turno; conservar el borrador si la sesión devuelve `busy` |
-| `Ctrl+j` en INSERT | Insertar salto de línea sin depender de Shift+Enter |
-| `Esc` en INSERT | Volver a NORMAL |
-| `Esc` en NORMAL | Cancelar el turno activo, si existe |
-| `j` / `k` o flechas en NORMAL | Cambiar sesión |
-| `Ctrl+d` / `Ctrl+u` en NORMAL | Desplazar historial |
-| `Ctrl+n` | Crear sesión: elegir Codex/agy, modelo opcional, alias y cwd; inicialmente el cwd de arranque |
-| `q` en NORMAL | Salir y apagar todas las sesiones |
+| `Enter` | Enviar el mensaje. Si la sesión está ocupada, el borrador se conserva |
+| `Shift+Enter` o `Ctrl+j` | Insertar un salto de línea |
+| `Alt+↑` / `Alt+↓` | Cambiar de sesión y conservar el borrador y el scroll |
+| `PgUp` / `PgDn` | Desplazar el historial |
+| `Esc` | Cancelar el turno activo de esa sesión |
+| `Ctrl+n` | Crear una sesión |
+| `Alt+q` o `Ctrl+c` | Cerrar Orch y restaurar la terminal |
 
 En el modal, `Tab` cambia de campo, `Enter` confirma y `Esc` cierra. Un cwd inválido mantiene abierto el modal con el error y los valores ingresados.
 
@@ -241,14 +239,14 @@ Inicializar idempotentemente `~/.orch/shared/` con `mcp.json`, `memory/` y `skil
 ### Fase 7 — Mejoras de interacción y visuales
 
 - `Ctrl+k`: command palette fuzzy para crear/cerrar sesiones, exportar Markdown y limpiar historial, con semántica explícita respecto de persistencia y conversación del proveedor.
-- Kitty Keyboard Protocol con detección y fallback: Shift+Enter para salto de línea cuando pueda distinguirse; mantener `Ctrl+j` como alternativa. Distinguir y reservar Ctrl+Enter sin imponer todavía una acción configurable.
+- La fase 3 incorporó detección del protocolo de teclado Kitty para `Shift+Enter`, con `Ctrl+j` como alternativa. `Ctrl+Enter` queda reservado.
 - Balancear `PushKeyboardEnhancementFlags`/`PopKeyboardEnhancementFlags` incluso ante errores y mantener el arranque operativo si la detección falla.
 - Mejorar bloques de código y presentación según el uso real.
 - Imágenes opcionales con `ratatui-image`: detectar gráficos Kitty por separado del protocolo de teclado, respetar scroll/layout y mostrar referencia textual cuando no haya soporte.
 
 ## 5. Reglas de ejecución y verificación
 
-Las reglas permanentes y los comandos de calidad están en [AGENTS.md](AGENTS.md). Umbral automatizado: 90% de cobertura de líneas de producción, además de pruebas explícitas para todos los flujos críticos. Estado tras la fase 3: 27 tests offline, 95,37% de líneas cubiertas (2026-11-27); ver [CI](.github/workflows/ci.yml). La medición excluye solo el código de tests, no módulos de producción.
+Las reglas permanentes y los comandos de calidad están en [AGENTS.md](AGENTS.md). Umbral automatizado: 90% de cobertura de líneas de producción, además de pruebas explícitas para todos los flujos críticos. Estado tras la fase 3: 28 tests offline, 95,22% de líneas cubiertas (2026-11-28); ver [CI](.github/workflows/ci.yml). La medición excluye solo el código de tests, no módulos de producción.
 
 
 - Completar y verificar cada fase inicial antes de avanzar; el roadmap posterior puede reordenarse según uso real. Actualizar este archivo con decisiones y resultados concretos.

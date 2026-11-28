@@ -18,11 +18,14 @@ import unicodedata
 
 ALT_IN = b"\x1b[?1049h"
 ALT_OUT = b"\x1b[?1049l"
+KEYBOARD_QUERY = b"\x1b[?u\x1b[c"
+KEYBOARD_PUSH = b"\x1b[>12u"
+KEYBOARD_POP = b"\x1b[<1u"
 
 
 # Ratatui emits cursor-addressed diffs. Reconstruct text cells instead of asserting how
 # a string happens to be split across ANSI writes.
-CSI = re.compile(r"\x1b\[([?0-9;]*)([ -/]*)([@-~])")
+CSI = re.compile(r"\x1b\[([0-?]*)([ -/]*)([@-~])")
 
 
 class Screen:
@@ -72,7 +75,7 @@ class Screen:
 
 
 class Terminal:
-    def __init__(self, binary, directory, args=(), size=(100, 24), env=None):
+    def __init__(self, binary, directory, args=(), size=(100, 24), env=None, enhanced=False):
         self.master, self.slave = os.openpty()
         self.original = termios.tcgetattr(self.slave)
         self._size(*size)
@@ -81,6 +84,8 @@ class Terminal:
                                         env=env)
         self.output = bytearray()
         self.screen = Screen()
+        self.enhanced = enhanced
+        self.answered_query = False
 
     def _size(self, width, height):
         fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
@@ -102,6 +107,11 @@ class Terminal:
                 chunk = os.read(self.master, 65536)
                 self.output.extend(chunk)
                 self.screen.write(chunk)
+                if not self.answered_query and KEYBOARD_QUERY in self.output:
+                    self.answered_query = True
+                    if self.enhanced:
+                        os.write(self.master, b"\x1b[?0u")
+                    os.write(self.master, b"\x1b[?1;2c")
             except OSError as exc:
                 if exc.errno != errno.EIO:
                     raise
@@ -126,6 +136,10 @@ class Terminal:
         assert ALT_IN in self.output and ALT_OUT in self.output, bytes(self.output)[-1000:]
         assert b"\x1b[?2004h" in self.output and b"\x1b[?2004l" in self.output
         assert termios.tcgetattr(self.slave) == self.original
+        if self.enhanced:
+            assert self.output.index(KEYBOARD_PUSH) < self.output.index(KEYBOARD_POP) < self.output.index(ALT_OUT)
+        else:
+            assert KEYBOARD_PUSH not in self.output and KEYBOARD_POP not in self.output
 
     def __enter__(self):
         return self
@@ -163,90 +177,124 @@ def stopped(pid):
     assert not Path(f"/proc/{pid}").exists(), pid
 
 
+def fake_provider(root):
+    fake = root / "provider"
+    fake.write_bytes(b"#!/usr/bin/env python3\n" + Path(__file__).with_name("tui_provider.py").read_bytes())
+    fake.chmod(0o700)
+    return ["--codex-bin", fake, "--agy-bin", fake, "--timeout-secs", "15"]
+
+
 def flow(binary, root):
     codex, agy = root / "codex", root / "agy"
     codex.mkdir()
     agy.mkdir()
-    fake = root / "provider"
-    fake.write_bytes(b"#!/usr/bin/env python3\n" + Path(__file__).with_name("tui_provider.py").read_bytes())
-    fake.chmod(0o700)
-    args = ["--codex-bin", fake, "--agy-bin", fake, "--timeout-secs", "15"]
-    with Terminal(binary, root, args) as term:
-        term.expect(0, ALT_IN, "NORMAL", "Ctrl+n")
+    args = fake_provider(root)
+    with Terminal(binary, root, args, env={**os.environ, "NO_COLOR": ""}) as term:
+        term.expect(0, ALT_IN, "Ctrl+j salto", "Ctrl+n")
         assert termios.tcgetattr(term.slave) != term.original
         term.expect(term.send(b"\x0e"), "Nueva")
         mark = term.send(b"\tfixture-codex\talpha\t\x15/nonexistent-orch-cwd\r")
         term.expect(mark, "invalid cwd")
         term.expect(term.send(b"\x15" + os.fsencode(codex) + b"\r"), "alpha", "/codex")
 
-        term.send(b"ilong\r")
+        term.send(b"long\r")
         first = requests(codex, 1, term)[0]
         assert first["prompt"] == "long"
         assert "--model=fixture-codex" in first["args"]
         assert first["cwd"] == str(codex)
         term.expect(0, "LINE-49")
+        assert "Vos" not in term.screen.text() and "Agente" not in term.screen.text()
         # Put resize readiness first while input also waits in the descriptor.
         mark = term.resize(102, 24)
-        term.send(b"\x15" * 9)
-        term.expect(mark, "LINE-00")
-        term.expect(term.send(b"icodex draft"), "codex draft")
-        term.expect(term.send(b"\x1b"), "NORMAL")
+        term.send(b"\x1b[5~" * 9)
+        term.expect(mark, "LINE-00", "long")
+        assert re.search(rb"(?:\x1b\[|;)48;5;237[;m]", term.output[mark:])
+        term.expect(term.send(b"codex draft"), "codex draft")
 
         term.expect(term.send(b"\x0e"), "Nueva")
         term.expect(term.send(b"\x1b[C"), "agy")
         term.expect(term.send(b"\t\tbeta\t\x15" + os.fsencode(agy) + b"\r"), "beta", "/agy")
-        term.send(b"iwait\r")
+        start = term.send(b"wait\r")
         active_agy = requests(agy, 1, term)[0]
         assert not any(arg.startswith("--model=") for arg in active_agy["args"])
         assert active_agy["cwd"] == str(agy)
+        term.expect(start, "Respondiendo")
+        frames = set()
+        deadline = time.monotonic() + 3
+        while len(frames) < 2 and time.monotonic() < deadline:
+            frame = re.search(r"([⠋⠙⠹⠸⠼⠴⠦⠧]) Respondiendo", term.screen.text())
+            if frame:
+                frames.add(frame[1])
+            term.read(.04)
+        assert len(frames) >= 2, term.screen.text()
 
-        term.send(b"k")
+        term.send(b"\x1b[1;3A")
         mark = term.resize(101, 24)
         term.expect(mark, "alpha", "LINE-00", "codex draft")
         assert "LINE-49" not in term.screen.text()
-        term.send(b"i\x15wait\r")
+        term.send(b"\x15wait\r")
         active_codex = requests(codex, 2, term)[1]
         assert "tui-codex" in active_codex["args"]
 
-        term.expect(term.send(b"ikeep draft\r"), "session is busy")
-        term.send(b"\x04" * 12)
-        term.send(b"\x1b")
-        term.expect(len(term.output), "Turno cancelado")
+        term.expect(term.send(b"keep draft\r"), "session is busy")
+        term.send(b"\x1b[6~" * 12)
+        term.expect(term.send(b"\x1b"), "Turno cancelado")
         stopped(active_codex["pid"])
         assert Path(f"/proc/{active_agy['pid']}").exists()
         mark = term.resize(102, 24)
         term.expect(mark, "keep draft", "Turno cancelado")
 
         (agy / "continue").touch()
-        term.send(b"j")
+        term.send(b"\x1b[1;3B")
         term.expect(term.resize(103, 24), "beta", "RESPUESTA")
-        term.send(b"i\x1b[200~uno\x1b[201~\x0adosx\x7f\r")
+        assert "Respondiendo" not in term.screen.text()
+        term.send(b"\x1b[200~uno\x1b[201~\x0adosx\x7f\r")
         resumed = requests(agy, 2, term)[1]
         assert resumed["prompt"] == "uno\ndos"
         assert "--conversation=tui-agy" in resumed["args"]
-        term.send(b"ifail\r")
+        term.send(b"fail\r")
         requests(agy, 3, term)
         term.expect(term.resize(104, 24), "Error", "error de prueba")
-        term.send(b"irecuperar\r")
+        recovering = term.send(b"ir y quedar\r")
         recovered = requests(agy, 4, term)[3]
+        assert recovered["prompt"] == "ir y quedar"
         assert "--conversation=tui-agy" in recovered["args"]
-        term.expect(len(term.output), "Lista · reanuda")
-        term.send(b"iholi\r")
+        term.expect(recovering, "Lista · reanuda")
+        sending = term.send(b"holi\r")
         denied = requests(agy, 5, term)[4]
         assert "--conversation=tui-agy" in denied["args"]
-        term.expect(len(term.output), "agy denied 1 tool action(s)", "read_file")
+        term.expect(sending, "agy denied 1 tool action(s)", "read_file")
 
-        term.expect(term.resize(40, 13), "NORMAL", "beta")
+        term.expect(term.resize(40, 13), "Alt+q", "beta")
         term.expect(term.resize(10, 4), "Terminal p")
-        term.expect(term.resize(100, 24), "NORMAL", "beta")
-        term.send(b"ki\x15wait\r")
+        term.expect(term.resize(100, 24), "Alt+q", "beta")
+        term.send(b"\x1b[1;3A\x15wait\r")
         closing = requests(codex, 3, term)[2]
-        mark = term.send(b"q")
+        mark = term.send(b"\x1bq")
         term.expect(mark, ALT_OUT)
         term.finish(0)
         stopped(closing["pid"])
         assert b"shutdown signal monitor ready" not in term.output
     assert (root / ".orch" / "orch.log").exists()
+
+
+def enhanced_keyboard(binary, root):
+    args = fake_provider(root)
+    with Terminal(binary, root, args, enhanced=True, env={**os.environ, "NO_COLOR": "1"}) as term:
+        term.expect(0, KEYBOARD_PUSH, "Shift+Enter")
+        term.expect(term.send(b"\x1b[110;5u"), "Nueva")
+        term.expect(term.send(b"\x1b[9u\x1b[9u\x1b[97u\x1b[13u"), "a · Codex")
+        draft = term.send(b"\x1b[49:33;2u\x1b[233u\x1b[13;2u\x1b[113u")
+        term.expect(draft, "!é", "q")
+        assert not (root / "requests").exists()
+        term.expect(term.send(b"\x1b[13;5u\x1b[120u"), "qx")
+        assert not (root / "requests").exists()
+        term.send(b"\x1b[13u")
+        submitted = requests(root, 1, term)[0]
+        assert submitted["prompt"] == "!é\nqx"
+        term.expect(0, "RESPUESTA", b"\x1b[7m")
+        term.send(b"\x1b[113;3u")
+        term.finish(0)
 
 
 def partial(binary, root):
@@ -258,8 +306,8 @@ def partial(binary, root):
 
 def interrupted(binary, root):
     for external in (True, False):
-        with Terminal(binary, root) as term:
-            term.expect(0, "NORMAL")
+        with Terminal(binary, root, enhanced=external) as term:
+            term.expect(0, "Ctrl+n")
             if external:
                 term.process.send_signal(signal.SIGTERM)
             else:

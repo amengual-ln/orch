@@ -37,3 +37,8 @@ async fn startup_failure_restores_the_partial_terminal() {
 async fn external_signal_restores_terminal() {
     pty("interrupted").await;
 }
+
+#[tokio::test]
+async fn enhanced_keyboard_handles_shift_enter_and_restores_the_protocol() {
+    pty("enhanced_keyboard").await;
+}

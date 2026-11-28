@@ -14,9 +14,12 @@ use orch::{
     session::{Provider, Status, Turn},
 };
 
-use super::{App, Conversation, Create, Mode};
+use super::{App, Conversation, Create};
 
 const ACCENT: Color = Color::Cyan;
+const MESSAGE_BACKGROUND: Color = Color::Indexed(237);
+const MESSAGE_FOREGROUND: Color = Color::Indexed(255);
+pub(super) const SPINNER: [char; 8] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
 
 pub(super) fn draw(app: &mut App, frame: &mut Frame) {
     let area = frame.area();
@@ -62,12 +65,16 @@ pub(super) fn draw(app: &mut App, frame: &mut Frame) {
         );
     }
 
-    let mut status = match (app.mode, small) {
-        (Mode::Insert, false) => "INSERT · Enter enviar · Ctrl+j salto · Esc volver",
-        (Mode::Insert, true) => "INSERT · Enter enviar · Esc",
-        (Mode::Normal, false) => "NORMAL · Ctrl+n nueva · q salir · i editar · j/k sesiones · Ctrl+u/d historial · Esc cancelar",
-        (Mode::Normal, true) => "NORMAL · Ctrl+n nueva · q salir",
-    }.to_owned();
+    let newline = if app.keyboard_enhanced {
+        "Shift+Enter"
+    } else {
+        "Ctrl+j"
+    };
+    let mut status = if small {
+        "Enter enviar · Alt+↑/↓ · Alt+q".to_owned()
+    } else {
+        format!("Enter enviar · {newline} salto · Alt+↑/↓ cambiar · Ctrl+n nueva · Alt+q salir")
+    };
     let shared_cwd = app.views.get(app.selected).is_some_and(|selected| {
         app.views
             .iter()
@@ -80,8 +87,9 @@ pub(super) fn draw(app: &mut App, frame: &mut Frame) {
             frame,
             active,
             view,
-            app.mode == Mode::Insert && app.create.is_none(),
+            app.create.is_none(),
             shared_cwd,
+            SPINNER[app.spinner],
         );
         if !view.notice.is_empty() {
             status = format!("{} · {}", visible(&view.notice), status);
@@ -117,6 +125,7 @@ fn draw_active(
     view: &mut Conversation,
     editing: bool,
     shared_cwd: bool,
+    spinner: char,
 ) {
     let [detail, history, input] = Layout::vertical([
         Constraint::Length(2),
@@ -132,17 +141,19 @@ fn draw_active(
         .session
         .inspect(|s| (s.status, s.provider_session_id.is_some()));
     let state = match status {
-        Status::Idle if id => "Lista · reanuda",
-        Status::Idle => "Lista",
-        Status::Running => "Ejecutando",
-        Status::Cancelling => "Cancelando",
-        Status::Error => "Error",
-        Status::Closed => "Cerrada",
+        Status::Idle if view.pending.is_some() => "",
+        Status::Idle if id => " · Lista · reanuda",
+        Status::Idle => " · Lista",
+        Status::Running | Status::Cancelling => "",
+        Status::Error => " · Error",
+        Status::Closed => " · Cerrada",
     };
+    let model = model
+        .as_deref()
+        .map_or_else(String::new, |model| format!(" · {}", visible(model)));
     let detail_text = format!(
-        "{} · {provider} · {} · {state}\n{}{}",
+        "{} · {provider}{model}{state}\n{}{}",
         visible(view.session.alias()),
-        visible(model.as_deref().unwrap_or("predeterminado")),
         visible(&view.session.cwd().display().to_string()),
         if shared_cwd { " · cwd compartido" } else { "" },
     );
@@ -151,7 +162,14 @@ fn draw_active(
         detail,
     );
 
-    let block = Block::bordered().title(" Conversación ");
+    let title = if status == Status::Cancelling {
+        " Cancelando ".into()
+    } else if view.is_waiting() {
+        format!(" {spinner} Respondiendo ")
+    } else {
+        " Conversación ".into()
+    };
+    let block = Block::bordered().title(title);
     let inside = block.inner(history);
     if inside.width != view.width {
         view.width = inside.width;
@@ -204,11 +222,7 @@ fn draw_active(
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines).block(block), history);
 
-    let prompt = Block::bordered().title(if editing {
-        " Prompt · INSERT "
-    } else {
-        " Prompt "
-    });
+    let prompt = Block::bordered().title(" Mensaje ");
     let inside = prompt.inner(input);
     let lines = wrap(&view.draft, usize::from(inside.width.max(1)));
     let end = lines.len().saturating_sub(usize::from(inside.height));
@@ -225,7 +239,22 @@ fn draw_active(
 }
 
 fn render_turn(lines: &mut Vec<Line<'static>>, turn: &Turn, width: usize) {
-    push(lines, "Vos", &turn.prompt, width, ACCENT);
+    let inset = usize::from(width > 2);
+    let content_width = width.saturating_sub(inset * 2).max(1);
+    let style = if crossterm::style::Colored::ansi_color_disabled_memoized() {
+        Style::default().add_modifier(Modifier::REVERSED)
+    } else {
+        Style::default()
+            .fg(MESSAGE_FOREGROUND)
+            .bg(MESSAGE_BACKGROUND)
+    };
+    lines.extend(wrap(&turn.prompt, content_width).into_iter().map(|text| {
+        let padding = width.saturating_sub(UnicodeWidthStr::width(text.as_str()) + inset);
+        Line::styled(
+            format!("{}{text}{}", " ".repeat(inset), " ".repeat(padding)),
+            style,
+        )
+    }));
     let mut messages = Vec::<String>::new();
     let mut indices = HashMap::new();
     for event in &turn.events {
@@ -245,12 +274,33 @@ fn render_turn(lines: &mut Vec<Line<'static>>, turn: &Turn, width: usize) {
             _ => {}
         }
     }
-    for message in &messages {
-        push(lines, "Agente", message, width, Color::Green);
+    let terminal = turn.events.last();
+    if !messages.is_empty()
+        || matches!(
+            terminal,
+            Some(
+                AgentEvent::TurnFailed { .. }
+                    | AgentEvent::TurnCancelled
+                    | AgentEvent::TurnCompleted { .. }
+            )
+        )
+    {
+        lines.push(Line::default());
     }
-    match turn.events.last() {
+    for message in &messages {
+        lines.extend(
+            wrap(message.trim_end_matches('\n'), width)
+                .into_iter()
+                .map(Line::from),
+        );
+    }
+    match terminal {
         Some(AgentEvent::TurnFailed { message, .. }) => {
-            push(lines, "Error", message, width, Color::Red)
+            lines.push(Line::styled(
+                "Error",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ));
+            lines.extend(wrap(message, width).into_iter().map(Line::from));
         }
         Some(AgentEvent::TurnCancelled) => {
             lines.push(Line::styled("Turno cancelado", Color::Yellow))
@@ -258,19 +308,15 @@ fn render_turn(lines: &mut Vec<Line<'static>>, turn: &Turn, width: usize) {
         Some(AgentEvent::TurnCompleted { final_text })
             if messages.is_empty() && !final_text.is_empty() =>
         {
-            push(lines, "Agente", final_text, width, Color::Green);
+            lines.extend(
+                wrap(final_text.trim_end_matches('\n'), width)
+                    .into_iter()
+                    .map(Line::from),
+            );
         }
         _ => {}
     }
     lines.push(Line::default());
-}
-
-fn push(lines: &mut Vec<Line<'static>>, title: &str, text: &str, width: usize, color: Color) {
-    lines.push(Line::styled(
-        title.to_owned(),
-        Style::default().fg(color).add_modifier(Modifier::BOLD),
-    ));
-    lines.extend(wrap(text, width).into_iter().map(Line::from));
 }
 
 fn visible(text: &str) -> String {

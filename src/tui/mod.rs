@@ -11,10 +11,14 @@ use crossterm::{
     cursor::{Hide, Show},
     event::{
         self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
-        KeyModifiers,
+        KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
     },
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{
+        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+        supports_keyboard_enhancement,
+    },
 };
 use orch::{
     agy::Agy,
@@ -31,7 +35,9 @@ pub struct Options {
     pub timeout: Duration,
 }
 
-struct RestoreTerminal;
+struct RestoreTerminal {
+    keyboard_enhanced: bool,
+}
 
 impl RestoreTerminal {
     fn enter() -> Result<Self> {
@@ -40,7 +46,9 @@ impl RestoreTerminal {
             "la TUI requiere una terminal. Para la CLI usá --smoke-test"
         );
         enable_raw_mode()?;
-        let restore = Self;
+        let restore = Self {
+            keyboard_enhanced: false,
+        };
         execute!(
             io::stdout(),
             EnterAlternateScreen,
@@ -49,10 +57,32 @@ impl RestoreTerminal {
         )?;
         Ok(restore)
     }
+    fn enable_keyboard_enhancement(&mut self) -> Result<()> {
+        match supports_keyboard_enhancement() {
+            Ok(true) => {
+                self.keyboard_enhanced = true;
+                execute!(
+                    io::stdout(),
+                    PushKeyboardEnhancementFlags(
+                        KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+                            | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+                    )
+                )?;
+            }
+            Ok(false) => {}
+            Err(error) => tracing::debug!(%error, "using legacy terminal keyboard input"),
+        }
+        Ok(())
+    }
 }
 
 impl Drop for RestoreTerminal {
     fn drop(&mut self) {
+        if self.keyboard_enhanced
+            && let Err(error) = execute!(io::stdout(), PopKeyboardEnhancementFlags)
+        {
+            tracing::error!(%error, "could not restore keyboard protocol");
+        }
         if let Err(error) = execute!(
             io::stdout(),
             DisableBracketedPaste,
@@ -65,13 +95,6 @@ impl Drop for RestoreTerminal {
             tracing::error!(%error, "could not restore terminal input");
         }
     }
-}
-
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-enum Mode {
-    #[default]
-    Normal,
-    Insert,
 }
 
 struct Create {
@@ -113,10 +136,15 @@ impl Create {
     }
 }
 
+struct Submission {
+    prompt: String,
+    task: JoinHandle<Result<u64, CommandError>>,
+}
+
 struct Conversation {
     session: Session,
     draft: String,
-    pending: Option<JoinHandle<Result<u64, CommandError>>>,
+    pending: Option<Submission>,
     notice: String,
     offset: Option<usize>,
     scroll_request: isize,
@@ -149,28 +177,53 @@ impl Conversation {
         if updated {
             self.transcript_dirty = true;
         }
-        if self.pending.as_ref().is_some_and(JoinHandle::is_finished)
-            && let Some(task) = self.pending.take()
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|submission| submission.task.is_finished())
+            && let Some(Submission { mut prompt, task }) = self.pending.take()
         {
-            match task.await {
-                Ok(Ok(_)) => self.draft.clear(),
-                Ok(Err(error)) => self.notice = error.to_string(),
-                Err(error) => self.notice = error.to_string(),
+            self.notice = match task.await {
+                Ok(Ok(_)) => return true,
+                Ok(Err(error)) => error.to_string(),
+                Err(error) => error.to_string(),
+            };
+            if !self.draft.is_empty() {
+                prompt.push('\n');
+                prompt.push_str(&self.draft);
             }
+            self.draft = prompt;
             return true;
         }
         updated
     }
 
-    fn submit(&mut self) -> bool {
+    fn submit(&mut self) {
         if self.pending.is_some() || self.draft.trim().is_empty() {
-            return false;
+            return;
+        }
+        if self
+            .session
+            .inspect(|state| matches!(state.status, Status::Running | Status::Cancelling))
+        {
+            self.notice = CommandError::Busy.to_string();
+            return;
         }
         self.notice.clear();
         let session = self.session.clone();
-        let prompt = self.draft.clone();
-        self.pending = Some(tokio::spawn(async move { session.send_turn(prompt).await }));
-        true
+        let prompt = std::mem::take(&mut self.draft);
+        let sent = prompt.clone();
+        self.pending = Some(Submission {
+            prompt,
+            task: tokio::spawn(async move { session.send_turn(sent).await }),
+        });
+    }
+
+    fn is_waiting(&self) -> bool {
+        self.pending.is_some()
+            || self
+                .session
+                .inspect(|state| state.status == Status::Running)
     }
 }
 
@@ -179,7 +232,8 @@ struct App {
     sessions: Sessions,
     views: Vec<Conversation>,
     selected: usize,
-    mode: Mode,
+    keyboard_enhanced: bool,
+    spinner: usize,
     create: Option<Create>,
 }
 
@@ -191,6 +245,11 @@ impl App {
             _ => return true,
         };
 
+        if key
+            .is_some_and(|key| key.code == KeyCode::Char('q') && key.modifiers == KeyModifiers::ALT)
+        {
+            return false;
+        }
         if let Some(create) = &mut self.create {
             match key.map(|key| key.code) {
                 Some(KeyCode::Esc) => self.create = None,
@@ -203,7 +262,6 @@ impl App {
                     Ok(session) => {
                         self.selected = self.views.len();
                         self.views.push(Conversation::new(session));
-                        self.mode = Mode::Normal;
                         self.create = None;
                     }
                     Err(error) => create.error = Some(error.to_string()),
@@ -223,58 +281,30 @@ impl App {
             self.create = Some(Create::new(&self.options.cwd));
             return true;
         }
-        if self.mode == Mode::Normal
-            && key.is_some_and(|key| {
-                key.code == KeyCode::Char('q')
-                    && !key
-                        .modifiers
-                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-            })
-        {
-            return false;
-        }
         let Some(active) = self.views.get_mut(self.selected) else {
             return true;
         };
-
-        if self.mode == Mode::Insert {
-            match key.map(|key| key.code) {
-                Some(KeyCode::Esc) => self.mode = Mode::Normal,
-                Some(KeyCode::Enter) => {
-                    if active.submit() {
-                        self.mode = Mode::Normal;
-                    }
-                }
-                _ if active.pending.is_none() => edit(&mut active.draft, input, true),
-                _ => {}
+        match key {
+            Some(key) if key.modifiers == KeyModifiers::ALT && key.code == KeyCode::Down => {
+                self.selected = (self.selected + 1) % self.views.len();
             }
-            return true;
-        }
-        if let Some(key) = key {
-            match key.code {
-                KeyCode::Char('d') if control(key, 'd') => active.scroll_request += 1,
-                KeyCode::Char('u') if control(key, 'u') => active.scroll_request -= 1,
-                KeyCode::Char('i') | KeyCode::Enter => self.mode = Mode::Insert,
-                KeyCode::Esc => {
-                    if active.session.inspect(|s| s.status) == Status::Running {
-                        let session = active.session.clone();
-                        tokio::spawn(async move {
-                            if let Err(error) = session.cancel().await {
-                                tracing::warn!(%error, "could not request turn cancellation");
-                            }
-                        });
-                    }
-                }
-                KeyCode::Char('j') | KeyCode::Down
-                    if !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                {
-                    self.selected = (self.selected + 1) % self.views.len();
-                }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    self.selected = (self.selected + self.views.len() - 1) % self.views.len();
-                }
-                _ => {}
+            Some(key) if key.modifiers == KeyModifiers::ALT && key.code == KeyCode::Up => {
+                self.selected = (self.selected + self.views.len() - 1) % self.views.len();
             }
+            Some(key) if key.code == KeyCode::PageDown => active.scroll_request += 1,
+            Some(key) if key.code == KeyCode::PageUp => active.scroll_request -= 1,
+            Some(key) if key.code == KeyCode::Enter && key.modifiers.is_empty() => active.submit(),
+            Some(key) if key.code == KeyCode::Esc => {
+                if active.session.inspect(|s| s.status) == Status::Running {
+                    let session = active.session.clone();
+                    tokio::spawn(async move {
+                        if let Err(error) = session.cancel().await {
+                            tracing::warn!(%error, "could not request turn cancellation");
+                        }
+                    });
+                }
+            }
+            _ => edit(&mut active.draft, input, true),
         }
         true
     }
@@ -290,7 +320,13 @@ fn edit(value: &mut String, event: Event, multiline: bool) {
             value.clear();
             return;
         }
-        Event::Key(key) if multiline && control(key, 'j') => "\n".into(),
+        Event::Key(key)
+            if multiline
+                && (control(key, 'j')
+                    || (key.code == KeyCode::Enter && key.modifiers == KeyModifiers::SHIFT)) =>
+        {
+            "\n".into()
+        }
         Event::Key(key) if key.code == KeyCode::Backspace => {
             value.pop();
             return;
@@ -320,23 +356,26 @@ pub async fn run(options: Options, mut signal: watch::Receiver<bool>) -> Result<
     std::panic::set_hook(Box::new(|info| {
         tracing::error!(location = ?info.location(), "terminal UI panicked");
     }));
-    let restore = RestoreTerminal::enter()?;
+    let mut restore = RestoreTerminal::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let size = terminal.size()?;
     ensure!(
         size.width > 0 && size.height > 0,
         "la terminal informó un tamaño vacío"
     );
+    restore.enable_keyboard_enhancement()?;
     let mut app = App {
         options,
         sessions: Sessions::default(),
         views: Vec::new(),
         selected: 0,
-        mode: Mode::Normal,
+        keyboard_enhanced: restore.keyboard_enhanced,
+        spinner: 0,
         create: None,
     };
     let mut ticks = time::interval(Duration::from_millis(40));
     ticks.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+    let started = time::Instant::now();
     let result = async {
         let mut dirty = true;
         loop {
@@ -360,6 +399,12 @@ pub async fn run(options: Options, mut signal: watch::Receiver<bool>) -> Result<
                 if !app.handle(input) {
                     return Ok(false);
                 }
+            }
+            let spinner = (started.elapsed().as_millis() / 120 % view::SPINNER.len() as u128) as usize;
+            if app.spinner != spinner {
+                app.spinner = spinner;
+                dirty |= app.create.is_none()
+                    && app.views.get(app.selected).is_some_and(Conversation::is_waiting);
             }
             if dirty {
                 terminal.draw(|frame| view::draw(&mut app, frame))?;

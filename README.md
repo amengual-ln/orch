@@ -31,14 +31,15 @@ Presioná **Ctrl+n** para crear una sesión. Elegí Codex o agy con las flechas 
 
 | Tecla | Acción |
 | --- | --- |
-| `i` o `Enter` en NORMAL | Editar el borrador de la sesión activa |
-| `Enter` en INSERT | Enviar el borrador. Si la sesión está ocupada, el borrador se conserva |
-| `Ctrl+j` en INSERT | Insertar un salto de línea |
-| `Esc` en INSERT | Volver a NORMAL |
-| `j` / `k` o ↓ / ↑ en NORMAL | Cambiar de sesión, conservando el borrador y el scroll |
-| `Ctrl+d` / `Ctrl+u` en NORMAL | Desplazar el historial; al volver al final se sigue la salida nueva |
-| `Esc` en NORMAL | Cancelar el turno activo de esa sesión |
-| `q` en NORMAL o `Ctrl+c` | Cerrar Orch y restaurar la terminal |
+| `Enter` | Enviar el mensaje. Si la sesión está ocupada, el borrador se conserva |
+| `Shift+Enter` o `Ctrl+j` | Insertar un salto de línea |
+| `Alt+↑` / `Alt+↓` | Cambiar de sesión y conservar el borrador y el scroll |
+| `PgUp` / `PgDn` | Desplazar el historial |
+| `Esc` | Cancelar el turno activo de esa sesión |
+| `Ctrl+n` | Crear una sesión |
+| `Alt+q` o `Ctrl+c` | Cerrar Orch y restaurar la terminal |
+
+El campo de mensaje queda listo para escribir. Tus mensajes tienen un fondo distinto y el indicador «Respondiendo» aparece mientras el proveedor está activo. `Shift+Enter` requiere una terminal que distinga esa combinación. Usá `Ctrl+j` en terminales que mandan la misma tecla que `Enter`.
 
 agy ejecuta cada turno en modo estricto y rechaza las herramientas que requieren confirmación. Para probar una conversación en un repositorio, podés enviar «Respondé solo holi, sin usar herramientas ni leer archivos». [Permisos de agy en modo headless](https://antigravity.google/docs/cli/headless/#permissions-in-headless-mode)
 
@@ -63,7 +64,7 @@ cargo install cargo-llvm-cov --locked --version 0.9.2
 cargo llvm-cov --locked --all-targets --ignore-filename-regex '(^|/)tests/' --fail-under-lines 90
 ```
 
-Medición del 28 de noviembre de 2026: **95,47%** (1475 de 1545 líneas), con **27 tests offline** en Linux. Las pruebas de pseudoterminal cubren la navegación, el borrador, el scroll, la cancelación selectiva, el resize y la restauración de la terminal. La cobertura de líneas no mide por sí sola todas las combinaciones de ramas o carreras.
+Medición del 28 de noviembre de 2026: **95,22%** (1535 de 1612 líneas), con **28 tests offline** en Linux. Las pruebas de pseudoterminal cubren la navegación, el borrador, el scroll, la cancelación selectiva, el resize y la restauración de la terminal. La cobertura de líneas no mide por sí sola todas las combinaciones de ramas o carreras.
 
 [El workflow](.github/workflows/ci.yml) prepara Rust 1.100.0 y ejecuta formato, check, Clippy, tests y el umbral de cobertura en pushes y pull requests. Los comandos se verificaron localmente en el host; los resultados de cada ejecución remota se consultan en GitHub Actions y en el PR correspondiente.
 
