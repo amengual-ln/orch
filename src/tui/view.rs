@@ -46,7 +46,10 @@ pub(super) fn draw(app: &mut App, frame: &mut Frame) {
             ListItem::new(format!(
                 "{} {}",
                 indicator(status),
-                visible(view.session.alias())
+                sidebar_alias(
+                    view.session.alias(),
+                    sessions.width.saturating_sub(6).into()
+                )
             ))
         })
         .collect();
@@ -109,6 +112,31 @@ pub(super) fn draw(app: &mut App, frame: &mut Frame) {
     }
 }
 
+fn sidebar_alias(alias: &str, width: usize) -> String {
+    let alias = visible(alias);
+    if alias.width() <= width {
+        return alias;
+    }
+    if let Some((prefix, suffix)) = alias.rsplit_once('-')
+        && suffix.len() == 8
+        && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && width > suffix.len()
+    {
+        let mut room = width - suffix.len() - 1;
+        let prefix: String = prefix
+            .chars()
+            .take_while(|ch| {
+                let cells = ch.width().unwrap_or(0);
+                let fits = cells <= room;
+                room = room.saturating_sub(cells);
+                fits
+            })
+            .collect();
+        return format!("{prefix}…{suffix}");
+    }
+    alias
+}
+
 fn indicator(status: Status) -> &'static str {
     match status {
         Status::Idle => "·",
@@ -148,12 +176,14 @@ fn draw_active(
         Status::Error => " · Error",
         Status::Closed => " · Cerrada",
     };
-    let model = model
-        .as_deref()
-        .map_or_else(String::new, |model| format!(" · {}", visible(model)));
+    let model = visible(
+        view.model
+            .reported()
+            .or(model.as_deref())
+            .unwrap_or("modelo automático"),
+    );
     let detail_text = format!(
-        "{} · {provider}{model}{state}\n{}{}",
-        visible(view.session.alias()),
+        "{provider} · {model}{state}\n{}{}",
         visible(&view.session.cwd().display().to_string()),
         if shared_cwd { " · cwd compartido" } else { "" },
     );
@@ -368,7 +398,7 @@ fn draw_create(frame: &mut Frame, area: Rect, create: &Create) {
         visible(&create.fields[1]),
         visible(&create.fields[2]),
     ];
-    let mut text: Vec<_> = ["Proveedor", "Modelo opcional", "Alias", "Cwd"]
+    let mut text: Vec<_> = ["Proveedor", "Modelo opcional", "Alias opcional", "Cwd"]
         .into_iter()
         .zip(values)
         .enumerate()
@@ -391,7 +421,7 @@ fn draw_create(frame: &mut Frame, area: Rect, create: &Create) {
         text.push(Line::styled(visible(error), Color::Red));
     }
     text.push(Line::from(
-        "Tab campo · ←/→ proveedor · Enter crear · Esc cerrar",
+        "↑/↓ o Tab campo · ←/→ proveedor · Enter crear · Esc cerrar",
     ));
     frame.render_widget(
         Paragraph::new(text)

@@ -246,7 +246,7 @@ def flow(binary, root):
 
         (agy / "continue").touch()
         term.send(b"\x1b[1;3B")
-        term.expect(term.resize(103, 24), "beta", "RESPUESTA")
+        term.expect(term.resize(103, 24), "beta", "RESPUESTA", "Fixture Agy (High)")
         assert "Respondiendo" not in term.screen.text()
         term.send(b"\x1b[200~uno\x1b[201~\x0adosx\x7f\r")
         resumed = requests(agy, 2, term)[1]
@@ -264,6 +264,7 @@ def flow(binary, root):
         denied = requests(agy, 5, term)[4]
         assert "--conversation=tui-agy" in denied["args"]
         term.expect(sending, "agy denied 1 tool action(s)", "read_file")
+        assert b"--dangerously-skip-permissions" not in term.output[sending:]
 
         term.expect(term.resize(40, 13), "Alt+q", "beta")
         term.expect(term.resize(10, 4), "Terminal p")
@@ -279,20 +280,28 @@ def flow(binary, root):
 
 
 def enhanced_keyboard(binary, root):
+    project = root / "orch"
+    project.mkdir()
+    codex_home = str(root / "codex-home")
     args = fake_provider(root)
-    with Terminal(binary, root, args, enhanced=True, env={**os.environ, "NO_COLOR": "1"}) as term:
+    env = {**os.environ, "NO_COLOR": "1", "CODEX_HOME": codex_home, "ORCH_FAKE_CODEX_HOME": codex_home}
+    with Terminal(binary, root, args, enhanced=True, env=env) as term:
         term.expect(0, KEYBOARD_PUSH, "Shift+Enter")
         term.expect(term.send(b"\x1b[110;5u"), "Nueva")
-        term.expect(term.send(b"\x1b[9u\x1b[9u\x1b[97u\x1b[13u"), "a · Codex")
+        term.send(b"\x1b[B" * 3 + b"\x1b[A" + b"\x1b[B")
+        term.expect(term.send(b"\x1b[117;5u" + os.fsencode(project) + b"\x1b[13u"), "orch-codex-", str(project))
+        alias = re.search(r"orch-codex-([0-9a-f]{8})", term.screen.text())
+        assert alias
+        term.expect(term.resize(80, 24), "…" + alias[1])
         draft = term.send(b"\x1b[49:33;2u\x1b[233u\x1b[13;2u\x1b[113u")
         term.expect(draft, "!é", "q")
-        assert not (root / "requests").exists()
+        assert not (project / "requests").exists()
         term.expect(term.send(b"\x1b[13;5u\x1b[120u"), "qx")
-        assert not (root / "requests").exists()
+        assert not (project / "requests").exists()
         term.send(b"\x1b[13u")
-        submitted = requests(root, 1, term)[0]
+        submitted = requests(project, 1, term)[0]
         assert submitted["prompt"] == "!é\nqx"
-        term.expect(0, "RESPUESTA", b"\x1b[7m")
+        term.expect(0, "RESPUESTA", "gpt-fixture-sol medium", b"\x1b[7m")
         term.send(b"\x1b[113;3u")
         term.finish(0)
 

@@ -1,3 +1,4 @@
+mod model;
 mod view;
 
 use std::{
@@ -143,6 +144,7 @@ struct Submission {
 
 struct Conversation {
     session: Session,
+    model: model::Model,
     draft: String,
     pending: Option<Submission>,
     notice: String,
@@ -159,6 +161,7 @@ impl Conversation {
     fn new(session: Session) -> Self {
         Self {
             session,
+            model: model::Model::default(),
             draft: String::new(),
             pending: None,
             notice: String::new(),
@@ -172,8 +175,9 @@ impl Conversation {
         }
     }
 
-    async fn refresh(&mut self) -> bool {
+    async fn refresh(&mut self, options: &Options, cancel: &watch::Receiver<bool>) -> bool {
         let updated = self.session.take_update();
+        let model_updated = self.model.refresh(&self.session, options, cancel).await;
         if updated {
             self.transcript_dirty = true;
         }
@@ -195,7 +199,7 @@ impl Conversation {
             self.draft = prompt;
             return true;
         }
-        updated
+        updated || model_updated
     }
 
     fn submit(&mut self) {
@@ -253,8 +257,8 @@ impl App {
         if let Some(create) = &mut self.create {
             match key.map(|key| key.code) {
                 Some(KeyCode::Esc) => self.create = None,
-                Some(KeyCode::Tab) => create.field = (create.field + 1) % 4,
-                Some(KeyCode::BackTab) => create.field = (create.field + 3) % 4,
+                Some(KeyCode::Tab | KeyCode::Down) => create.field = (create.field + 1) % 4,
+                Some(KeyCode::BackTab | KeyCode::Up) => create.field = (create.field + 3) % 4,
                 Some(KeyCode::Enter) => match self
                     .sessions
                     .create(&create.fields[1], create.runner(&self.options))
@@ -376,6 +380,7 @@ pub async fn run(options: Options, mut signal: watch::Receiver<bool>) -> Result<
     let mut ticks = time::interval(Duration::from_millis(40));
     ticks.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
     let started = time::Instant::now();
+    let (stop_models, model_cancel) = watch::channel(false);
     let result = async {
         let mut dirty = true;
         loop {
@@ -384,7 +389,7 @@ pub async fn run(options: Options, mut signal: watch::Receiver<bool>) -> Result<
                 _ = ticks.tick() => {}
             }
             for conversation in &mut app.views {
-                dirty |= conversation.refresh().await;
+                dirty |= conversation.refresh(&app.options, &model_cancel).await;
             }
             for _ in 0..32 {
                 // The Unix poll backend preserves keyboard readiness alongside SIGWINCH.
@@ -415,7 +420,11 @@ pub async fn run(options: Options, mut signal: watch::Receiver<bool>) -> Result<
     .await;
     drop(terminal);
     drop(restore);
+    stop_models.send_replace(true);
     let shutdown = app.sessions.shutdown().await;
+    for view in &mut app.views {
+        view.model.shutdown(view.session.provider()).await;
+    }
     shutdown?;
     result
 }

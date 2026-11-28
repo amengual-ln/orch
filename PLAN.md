@@ -84,6 +84,11 @@ Decisión inicial: un proceso por turno en ambos runners; agy reanuda con `--con
 - Los smoke tests iniciales son de solo lectura. Antes de habilitar ediciones, definir y verificar una política explícita de sandbox/permisos para lanzamiento y reanudación; no asumir que ambos aceptan las mismas opciones.
 - En el MVP headless no habrá un diálogo de aprobaciones propio: usar una política no interactiva soportada por el proveedor que rechace lo no autorizado y mostrar ese rechazo como fallo accionable. No activar bypass de permisos para hacer pasar una prueba. Si una versión no permite esta política, documentar la limitación antes de habilitar ediciones.
 
+### Deuda técnica de acceso a archivos y recursos compartidos
+
+- [ ] Habilitar y verificar por proveedor la lectura de archivos dentro del proyecto elegido para cada sesión, tanto al iniciarla como al reanudarla. La política debe acotar las rutas al proyecto, contemplar symlinks y mantener permisos separados para escritura y ejecución de comandos. La regresión de agy debe cubrir la lectura de `PLAN.md`, que hoy se deniega en modo estricto.
+- [ ] Dar a los agentes acceso al contexto, las skills y la configuración compartida que corresponda a su sesión. Definir qué recursos puede consultar cada agente, cómo se entregan y qué precedencia tiene la configuración del proyecto. Verificar el acceso al iniciar y al reanudar en cada proveedor, junto con las integraciones de las fases 5 y 6.
+
 ## 3. Fases iniciales
 
 ### Fase 1 — Pruebas verticales headless: Codex y agy/Gemini
@@ -186,7 +191,7 @@ Atajos del MVP:
 | `Ctrl+n` | Crear una sesión |
 | `Alt+q` o `Ctrl+c` | Cerrar Orch y restaurar la terminal |
 
-En el modal, `Tab` cambia de campo, `Enter` confirma y `Esc` cierra. Un cwd inválido mantiene abierto el modal con el error y los valores ingresados.
+En el modal, `↑/↓` o `Tab` cambian de campo, `Enter` confirma y `Esc` cierra. Un alias vacío genera uno a partir del directorio y el proveedor, con un sufijo que incorpora el modelo solicitado. Un cwd inválido mantiene abierto el modal con el error y los valores ingresados.
 
 **Aceptación:** crear dos sesiones con distintos cwd, enviar y reanudar turnos, alternar conservando borradores/scroll y cancelar una generación, todo sin mouse. La otra sesión sigue operativa. Verificar resize, salida de orch y fallo de inicialización parcial: no quedan procesos controlados ni modos de terminal activos. La TUI nunca imprime logs en pantalla.
 
@@ -246,7 +251,7 @@ Inicializar idempotentemente `~/.orch/shared/` con `mcp.json`, `memory/` y `skil
 
 ## 5. Reglas de ejecución y verificación
 
-Las reglas permanentes y los comandos de calidad están en [AGENTS.md](AGENTS.md). Umbral automatizado: 90% de cobertura de líneas de producción, además de pruebas explícitas para todos los flujos críticos. Estado tras la fase 3: 28 tests offline, 95,22% de líneas cubiertas (2026-11-28); ver [CI](.github/workflows/ci.yml). La medición excluye solo el código de tests, no módulos de producción.
+Las reglas permanentes y los comandos de calidad están en [AGENTS.md](AGENTS.md). Umbral automatizado: 90% de cobertura de líneas de producción, además de pruebas explícitas para todos los flujos críticos. Estado tras la fase 3: 28 tests offline, 94,75% de líneas cubiertas (2026-11-28); ver [CI](.github/workflows/ci.yml). La medición excluye solo el código de tests, no módulos de producción.
 
 
 - Completar y verificar cada fase inicial antes de avanzar; el roadmap posterior puede reordenarse según uso real. Actualizar este archivo con decisiones y resultados concretos.

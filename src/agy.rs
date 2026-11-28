@@ -9,6 +9,7 @@ use tokio::{process::Command, sync::watch};
 
 use crate::{
     events::{AgentEvent, FailureKind},
+    process::{self, Stop},
     runner::{self, TurnFailure, TurnParser, TurnResult},
 };
 
@@ -42,6 +43,47 @@ impl Agy {
         }
         command.arg(format!("--print={prompt}"));
         command
+    }
+
+    /// Query a conversation's model through the headless /model command.
+    pub async fn reported_model(
+        &self,
+        conversation: &str,
+        cancel: &mut watch::Receiver<bool>,
+    ) -> Option<String> {
+        let mut command = self.command("/model", Some(conversation));
+        let mut reported = None;
+        let mut succeeded = false;
+        let output = process::run(
+            &mut command,
+            self.timeout.min(Duration::from_secs(10)),
+            cancel,
+            |line| {
+                let Ok(event) = serde_json::from_slice::<Value>(line) else {
+                    return Ok(());
+                };
+                match event["event"].as_str() {
+                    Some("command_result") if event["command"]["name"] == "model" => {
+                        let data = &event["command"]["data"];
+                        reported = data["label"]
+                            .as_str()
+                            .or_else(|| data["id"].as_str())
+                            .filter(|label| !label.is_empty() && label.len() <= 128)
+                            .map(str::to_owned);
+                    }
+                    Some("result") => succeeded = event["result"]["status"] == "SUCCESS",
+                    _ => {}
+                }
+                Ok(())
+            },
+        )
+        .await
+        .ok()?;
+        if succeeded && matches!(output.stop, Stop::Exited) && output.status.success() {
+            reported
+        } else {
+            None
+        }
     }
 
     pub async fn turn(
@@ -153,6 +195,7 @@ impl<'a> Parser<'a> {
                     message.push_str(&names);
                     message.push(')');
                 }
+                message.push_str(". Headless mode cannot request approval.");
                 if self.delta_bytes == 0
                     && let Some(text) = payload["response"].as_str().filter(|text| !text.is_empty())
                 {

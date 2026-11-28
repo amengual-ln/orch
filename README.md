@@ -27,7 +27,7 @@ cargo run --locked
 
 Si instalaste el binario, ejecutá `orch` desde tu proyecto. El cwd de arranque aparece como valor inicial en el formulario. `--cwd <ruta>` permite elegir otro valor inicial.
 
-Presioná **Ctrl+n** para crear una sesión. Elegí Codex o agy con las flechas ←/→. Usá **Tab** para recorrer modelo, alias y cwd, y **Enter** para crearla. Si dejás vacío el modelo, se usa el predeterminado del proveedor. agy puede omitir el nombre de ese modelo al inicializar. Escribí un alias distinto para cada sesión. **Ctrl+u** borra el campo de texto activo. Los directorios pueden coincidir; la TUI indica cuándo comparten el mismo cwd.
+Presioná **Ctrl+n** para crear una sesión. Elegí Codex o agy con las flechas ←/→. Usá **↑/↓** o **Tab** para recorrer los campos y **Enter** para crearla. Si dejás vacío el modelo, se usa el predeterminado del proveedor. Si dejás el alias vacío, Orch genera uno con el directorio, el proveedor y un sufijo corto, por ejemplo `tuiharnes-codex-3bf56ad2`. **Ctrl+u** borra el campo de texto activo. Los directorios pueden coincidir; la TUI indica cuándo comparten el mismo cwd.
 
 | Tecla | Acción |
 | --- | --- |
@@ -40,6 +40,8 @@ Presioná **Ctrl+n** para crear una sesión. Elegí Codex o agy con las flechas 
 | `Alt+q` o `Ctrl+c` | Cerrar Orch y restaurar la terminal |
 
 El campo de mensaje queda listo para escribir. Tus mensajes tienen un fondo distinto y el indicador «Respondiendo» aparece mientras el proveedor está activo. `Shift+Enter` requiere una terminal que distinga esa combinación. Usá `Ctrl+j` en terminales que mandan la misma tecla que `Enter`.
+
+El encabezado muestra el modelo solicitado o informado por el proveedor. Codex registra el modelo y, cuando está disponible, el esfuerzo en los metadatos locales del turno. Orch consulta el modelo predeterminado de agy cuando el proveedor termina el primer turno con ID de conversación.
 
 agy ejecuta cada turno en modo estricto y rechaza las herramientas que requieren confirmación. Para probar una conversación en un repositorio, podés enviar «Respondé solo holi, sin usar herramientas ni leer archivos». [Permisos de agy en modo headless](https://antigravity.google/docs/cli/headless/#permissions-in-headless-mode)
 
@@ -64,7 +66,7 @@ cargo install cargo-llvm-cov --locked --version 0.9.2
 cargo llvm-cov --locked --all-targets --ignore-filename-regex '(^|/)tests/' --fail-under-lines 90
 ```
 
-Medición del 28 de noviembre de 2026: **95,22%** (1535 de 1612 líneas), con **28 tests offline** en Linux. Las pruebas de pseudoterminal cubren la navegación, el borrador, el scroll, la cancelación selectiva, el resize y la restauración de la terminal. La cobertura de líneas no mide por sí sola todas las combinaciones de ramas o carreras.
+Medición del 28 de noviembre de 2026: **94,75%** (1767 de 1865 líneas), con **28 tests offline** en Linux. Las pruebas de pseudoterminal cubren la navegación, el borrador, el scroll, la cancelación selectiva, el resize y la restauración de la terminal. La cobertura de líneas no mide por sí sola todas las combinaciones de ramas o carreras.
 
 [El workflow](.github/workflows/ci.yml) prepara Rust 1.100.0 y ejecuta formato, check, Clippy, tests y el umbral de cobertura en pushes y pull requests. Los comandos se verificaron localmente en el host; los resultados de cada ejecución remota se consultan en GitHub Actions y en el PR correspondiente.
 

@@ -280,7 +280,18 @@ async fn validates_alias_cwd_model_and_prompt_before_accepting_a_turn() {
     let session = sessions.create(" one ", runner(dir.path(), false)).unwrap();
     assert_eq!(session.alias(), "one");
     assert!(sessions.create("one", runner(dir.path(), false)).is_err());
-    assert!(sessions.create(" ", runner(dir.path(), false)).is_err());
+    let first = sessions.create(" ", runner(dir.path(), false)).unwrap();
+    let second = sessions.create("", runner(dir.path(), false)).unwrap();
+    let prefix = format!(
+        "{}-codex-",
+        dir.path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .replace('.', "-")
+    );
+    assert!(first.alias().starts_with(&prefix));
+    assert_ne!(first.alias(), second.alias());
     let mut invalid = Agy {
         executable: "agy".into(),
         cwd: dir.path().to_path_buf(),
