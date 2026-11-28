@@ -2,7 +2,7 @@
 
 Orquestador de agentes de código locales, orientado a una TUI manejada desde el teclado. El alcance y las fases están en [PLAN.md](PLAN.md).
 
-**Estado: fase 2.** Orch controla sesiones independientes de Codex y agy/Gemini. La CLI permite verificar ambos proveedores en paralelo.
+**Estado: fase 3.** Orch ofrece una interfaz de terminal para crear, alternar y reanudar sesiones de Codex y agy/Gemini.
 
 ## Requisitos
 
@@ -16,6 +16,31 @@ Con rustup podés instalar la misma versión que usa CI y sus componentes de des
 ```sh
 rustup toolchain install 1.100.0 --component rustfmt,clippy,llvm-tools-preview
 ```
+
+## Usar la TUI
+
+Ejecutá este comando desde el repositorio.
+
+```sh
+cargo run --locked
+```
+
+Si instalaste el binario, ejecutá `orch` desde tu proyecto. El cwd de arranque aparece como valor inicial en el formulario. `--cwd <ruta>` permite elegir otro valor inicial.
+
+Presioná **Ctrl+n** para crear una sesión. Elegí Codex o agy con las flechas ←/→. Usá **Tab** para recorrer modelo, alias y cwd, y **Enter** para crearla. Si dejás vacío el modelo, se usa el predeterminado del proveedor. Escribí un alias distinto para cada sesión. **Ctrl+u** borra el campo de texto activo. Los directorios pueden coincidir; la TUI indica cuándo comparten el mismo cwd.
+
+| Tecla | Acción |
+| --- | --- |
+| `i` o `Enter` en NORMAL | Editar el borrador de la sesión activa |
+| `Enter` en INSERT | Enviar el borrador. Si la sesión está ocupada, el borrador se conserva |
+| `Ctrl+j` en INSERT | Insertar un salto de línea |
+| `Esc` en INSERT | Volver a NORMAL |
+| `j` / `k` o ↓ / ↑ en NORMAL | Cambiar de sesión, conservando el borrador y el scroll |
+| `Ctrl+d` / `Ctrl+u` en NORMAL | Desplazar el historial; al volver al final se sigue la salida nueva |
+| `Esc` en NORMAL | Cancelar el turno activo de esa sesión |
+| `q` en NORMAL o `Ctrl+c` | Cerrar Orch y restaurar la terminal |
+
+El historial vive en memoria durante la ejecución. Los logs operativos van a `.orch/orch.log` desde el cwd de arranque. La CLI de smoke tests sigue disponible con `--smoke-test`.
 
 ## Compilar y verificar
 
@@ -36,7 +61,7 @@ cargo install cargo-llvm-cov --locked --version 0.9.2
 cargo llvm-cov --locked --all-targets --ignore-filename-regex '(^|/)tests/' --fail-under-lines 90
 ```
 
-Medición del 27 de noviembre de 2026: **94,90%** (930 de 980 líneas), con **24 tests offline** en Linux. La suite cubre los protocolos de ambos proveedores, los rechazos de agy con exit code 0, la concurrencia, la cancelación selectiva y los límites del historial. La cobertura de líneas no mide por sí sola todas las combinaciones de ramas o carreras.
+Medición del 27 de noviembre de 2026: **95,37%** (1464 de 1535 líneas), con **27 tests offline** en Linux. Las pruebas de pseudoterminal cubren la navegación, el borrador, el scroll, la cancelación selectiva, el resize y la restauración de la terminal. La cobertura de líneas no mide por sí sola todas las combinaciones de ramas o carreras.
 
 [El workflow](.github/workflows/ci.yml) prepara Rust 1.100.0 y ejecuta formato, check, Clippy, tests y el umbral de cobertura en pushes y pull requests. Los comandos se verificaron localmente en el host; los resultados de cada ejecución remota se consultan en GitHub Actions y en el PR correspondiente.
 

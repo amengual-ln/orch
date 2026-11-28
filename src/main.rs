@@ -1,3 +1,5 @@
+mod tui;
+
 use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
@@ -28,10 +30,10 @@ enum Provider {
 }
 
 #[derive(Parser)]
-#[command(version, about = "Headless coding-agent session smoke tests")]
+#[command(version, about = "Keyboard-driven coding-agent sessions")]
 struct Args {
     #[arg(long, value_enum)]
-    smoke_test: Provider,
+    smoke_test: Option<Provider>,
     #[arg(long, default_value = ".")]
     cwd: PathBuf,
     #[arg(long, default_value = "120", value_parser = clap::value_parser!(u64).range(1..=86400))]
@@ -161,13 +163,14 @@ async fn smoke_session(
     Ok(())
 }
 
-async fn smoke(args: Args, cancel: watch::Receiver<bool>) -> Result<()> {
+async fn smoke(args: Args, mode: Provider, cancel: watch::Receiver<bool>) -> Result<()> {
     let timeout = Duration::from_secs(args.timeout_secs);
     let codex = || -> Result<Runner> {
         Ok(Runner::Codex(Codex {
             executable: resolve_executable(args.codex_bin, "--codex-bin")?,
             cwd: args.cwd.clone(),
             timeout,
+            model: None,
         }))
     };
     let agy = |cwd| -> Result<Runner> {
@@ -175,12 +178,12 @@ async fn smoke(args: Args, cancel: watch::Receiver<bool>) -> Result<()> {
             executable: resolve_executable(args.agy_bin, "--agy-bin")?,
             cwd,
             timeout,
-            model: args.model.context("--smoke-test agy requires --model")?,
+            model: Some(args.model.context("--smoke-test agy requires --model")?),
         }))
     };
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let mut sessions = Sessions::default();
-    let result = match args.smoke_test {
+    let result = match mode {
         Provider::Codex => smoke_session(sessions.create("codex", codex()?)?, stamp, cancel).await,
         Provider::Agy => {
             smoke_session(sessions.create("agy", agy(args.cwd)?)?, stamp, cancel).await
@@ -222,15 +225,28 @@ async fn main() -> ExitCode {
             tracing::info!("shutdown signal received");
             let _ = sender.send(true);
         });
-        let result = smoke(args, cancel.clone()).await;
+        let result = match args.smoke_test.clone() {
+            Some(mode) => smoke(args, mode, cancel.clone()).await.map(|()| false),
+            None => {
+                let timeout = Duration::from_secs(args.timeout_secs);
+                let options = tui::Options {
+                    cwd: std::env::current_dir()?.join(args.cwd),
+                    codex: resolve_executable(args.codex_bin, "--codex-bin")?,
+                    agy: resolve_executable(args.agy_bin, "--agy-bin")?,
+                    timeout,
+                };
+                tui::run(options, cancel.clone()).await
+            }
+        };
         monitor.abort();
         result
     }
     .await;
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(interrupted) if interrupted || *cancel.borrow() => ExitCode::from(130),
+        Ok(_) => ExitCode::SUCCESS,
         Err(error) => {
-            // Headless CLI only; no TUI is active in this phase.
+            // The terminal guard has already restored the screen.
             eprintln!("orch: {error:#}");
             ExitCode::from(if *cancel.borrow() { 130 } else { 1 })
         }

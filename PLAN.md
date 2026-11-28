@@ -167,12 +167,12 @@ Resultado fase 2 (2026-11-27): el smoke test `--smoke-test concurrent` completó
 
 Objetivo: completar el flujo diario básico desde el teclado con Codex y agy/Gemini.
 
-- [ ] Agregar `ratatui` y `crossterm`; integrar teclado y eventos de sesiones sin bloquear el renderizado ni la entrada.
-- [ ] Layout inicial: lista de sesiones a la izquierda, conversación e input a la derecha, barra de estado con modo, estado y atajos. Mostrar alias, proveedor y cwd; ajustar el layout ante resize y terminales pequeñas.
-- [ ] Implementar modos `NORMAL` e `INSERT` y un modal de creación de sesión.
-- [ ] Conservar borrador y posición de scroll al alternar sesiones. Seguir la salida nueva solo si el usuario está al final del historial.
-- [ ] Mostrar errores y cancelaciones en la conversación; mantener accesible el input para recuperación.
-- [ ] Manejar raw mode y pantalla alternativa mediante una guarda de restauración, incluso ante inicialización parcial, errores y panic. Apagar procesos mediante la ruta común de cierre.
+- [x] Agregar `ratatui` y `crossterm`; integrar teclado y eventos de sesiones sin bloquear el renderizado ni la entrada.
+- [x] Layout inicial: lista de sesiones a la izquierda, conversación e input a la derecha, barra de estado con modo, estado y atajos. Mostrar alias, proveedor y cwd; ajustar el layout ante resize y terminales pequeñas.
+- [x] Implementar modos `NORMAL` e `INSERT` y un modal de creación de sesión.
+- [x] Conservar borrador y posición de scroll al alternar sesiones. Seguir la salida nueva solo si el usuario está al final del historial.
+- [x] Mostrar errores y cancelaciones en la conversación; mantener accesible el input para recuperación.
+- [x] Manejar raw mode y pantalla alternativa mediante una guarda de restauración, incluso ante inicialización parcial, errores y panic. Apagar procesos mediante la ruta común de cierre.
 
 Atajos del MVP:
 
@@ -191,6 +191,8 @@ Atajos del MVP:
 En el modal, `Tab` cambia de campo, `Enter` confirma y `Esc` cierra. Un cwd inválido mantiene abierto el modal con el error y los valores ingresados.
 
 **Aceptación:** crear dos sesiones con distintos cwd, enviar y reanudar turnos, alternar conservando borradores/scroll y cancelar una generación, todo sin mouse. La otra sesión sigue operativa. Verificar resize, salida de orch y fallo de inicialización parcial: no quedan procesos controlados ni modos de terminal activos. La TUI nunca imprime logs en pantalla.
+
+El 27 de noviembre de 2026 una prueba real de la TUI creó por teclado dos sesiones con Codex 0.172.0 y agy 1.5.17 / `gemini-3.8-flash-low`. Los dos proveedores recuperaron su marcador en el segundo turno. Se verificaron los cwd y la recolección de los hijos directos mediante `/proc`. Las pruebas offline en pseudoterminal verifican navegación, borradores, scroll, cancelación selectiva, resize, salida por teclado y restauración de termios ante una inicialización parcial.
 
 **Punto de revisión:** usar este flujo en repositorios reales y ajustar teclas, legibilidad y estados antes de sumar infraestructura. No es necesario completar todo el roadmap para empezar a usar orch.
 
@@ -246,11 +248,11 @@ Inicializar idempotentemente `~/.orch/shared/` con `mcp.json`, `memory/` y `skil
 
 ## 5. Reglas de ejecución y verificación
 
-Las reglas permanentes y los comandos de calidad están en [AGENTS.md](AGENTS.md). Umbral automatizado: 90% de cobertura de líneas de producción, además de pruebas explícitas para todos los flujos críticos. Estado tras la fase 2: 24 tests offline, 94,90% de líneas cubiertas (2026-11-27); ver [CI](.github/workflows/ci.yml). La medición excluye solo el código de tests, no módulos de producción.
+Las reglas permanentes y los comandos de calidad están en [AGENTS.md](AGENTS.md). Umbral automatizado: 90% de cobertura de líneas de producción, además de pruebas explícitas para todos los flujos críticos. Estado tras la fase 3: 27 tests offline, 95,37% de líneas cubiertas (2026-11-27); ver [CI](.github/workflows/ci.yml). La medición excluye solo el código de tests, no módulos de producción.
 
 
 - Completar y verificar cada fase inicial antes de avanzar; el roadmap posterior puede reordenarse según uso real. Actualizar este archivo con decisiones y resultados concretos.
-- Fases 1 y 2 completadas. La fase 3 corresponde a la TUI mínima.
+- Fases 1, 2 y 3 completadas. La fase 4 corresponde a persistencia, configuración y Claude.
 - No usar `unwrap()` en producción. Errores del proveedor, eventos nuevos y stdout inválido no deben causar panic ni éxito silencioso.
 - Nunca usar `println!`/`eprintln!` con la TUI activa; usar tracing en archivo. La CLI headless sí puede imprimir eventos normalizados.
 - Dejar pruebas pequeñas y deterministas para parsing, transiciones y ciclo de vida de procesos. Usar mocks/procesos controlados donde permitan reproducir fallos; evitar suites que solo repitan la implementación.

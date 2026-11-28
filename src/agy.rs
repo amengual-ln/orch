@@ -18,24 +18,25 @@ pub struct Agy {
     pub executable: PathBuf,
     pub cwd: PathBuf,
     pub timeout: Duration,
-    pub model: String,
+    pub model: Option<String>,
 }
 
 impl Agy {
     pub fn command(&self, prompt: &str, resume: Option<&str>) -> Command {
         let mut command = Command::new(&self.executable);
-        command
-            .current_dir(&self.cwd)
-            .arg(format!("--model={}", self.model))
-            .args([
-                "--mode",
-                "plan",
-                "--sandbox",
-                "--settings",
-                r#"{"toolPermission":"strict"}"#,
-                "--output-format",
-                "stream-json",
-            ]);
+        command.current_dir(&self.cwd);
+        if let Some(model) = &self.model {
+            command.arg(format!("--model={model}"));
+        }
+        command.args([
+            "--mode",
+            "plan",
+            "--sandbox",
+            "--settings",
+            r#"{"toolPermission":"strict"}"#,
+            "--output-format",
+            "stream-json",
+        ]);
         if let Some(id) = resume {
             command.arg(format!("--conversation={id}"));
         }
@@ -57,7 +58,7 @@ impl Agy {
             |cwd| {
                 let mut command = self.command(prompt, resume);
                 command.current_dir(&cwd);
-                (command, Parser::new(&self.model, cwd, resume))
+                (command, Parser::new(self.model.as_deref(), cwd, resume))
             },
             resume,
             emit,
@@ -67,7 +68,7 @@ impl Agy {
 }
 
 struct Parser<'a> {
-    model: &'a str,
+    model: Option<&'a str>,
     cwd: PathBuf,
     resume: Option<&'a str>,
     id: Option<String>,
@@ -77,7 +78,7 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn new(model: &'a str, cwd: PathBuf, resume: Option<&'a str>) -> Self {
+    fn new(model: Option<&'a str>, cwd: PathBuf, resume: Option<&'a str>) -> Self {
         Self {
             model,
             cwd,
@@ -110,7 +111,11 @@ impl<'a> Parser<'a> {
             };
             let init = &value["init"];
             let cwd = init["cwd"].as_str().map(Path::new);
-            if init["model"] != self.model || cwd != Some(self.cwd.as_path()) {
+            let model = init["model"].as_str().filter(|model| !model.is_empty());
+            if model.is_none()
+                || self.model.is_some_and(|expected| model != Some(expected))
+                || cwd != Some(self.cwd.as_path())
+            {
                 return Err(protocol("agy init reported an unexpected model or cwd"));
             }
             if init["permission_mode"] != "strict" {

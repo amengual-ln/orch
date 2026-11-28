@@ -33,13 +33,14 @@ pub enum Runner {
 
 impl Runner {
     fn validate(&mut self) -> Result<()> {
-        let cwd = match self {
-            Self::Codex(runner) => &mut runner.cwd,
-            Self::Agy(runner) => {
-                ensure!(!runner.model.trim().is_empty(), "agy requires a model");
-                &mut runner.cwd
-            }
+        let (cwd, model) = match self {
+            Self::Codex(runner) => (&mut runner.cwd, &runner.model),
+            Self::Agy(runner) => (&mut runner.cwd, &runner.model),
         };
+        ensure!(
+            model.as_ref().is_none_or(|model| !model.trim().is_empty()),
+            "session model must be nonempty when specified"
+        );
         *cwd = validate_cwd(cwd)?;
         Ok(())
     }
@@ -122,8 +123,8 @@ enum Command {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Provider {
-    Codex,
-    Agy { model: String },
+    Codex { model: Option<String> },
+    Agy { model: Option<String> },
 }
 
 #[derive(Clone)]
@@ -157,6 +158,11 @@ impl Session {
     /// Read state synchronously. The callback must finish before the controller can write.
     pub fn inspect<T>(&self, read: impl FnOnce(&Snapshot) -> T) -> T {
         read(&self.state.borrow())
+    }
+
+    /// Coalesce updates for a polling view while keeping the complete history.
+    pub fn take_update(&mut self) -> bool {
+        self.state.borrow_and_update().has_changed()
     }
 
     pub async fn changed(&mut self) -> Result<(), CommandError> {
@@ -228,7 +234,9 @@ impl Sessions {
             alias: alias.into(),
             cwd: runner.cwd().to_path_buf(),
             provider: match &runner {
-                Runner::Codex(_) => Provider::Codex,
+                Runner::Codex(runner) => Provider::Codex {
+                    model: runner.model.clone(),
+                },
                 Runner::Agy(runner) => Provider::Agy {
                     model: runner.model.clone(),
                 },
