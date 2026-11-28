@@ -151,15 +151,17 @@ Resultado 1C (2026-11-27): ambos smoke tests reales completaron dos turnos, recu
 
 Objetivo: administrar dos sesiones independientes usando los runners validados.
 
-- [ ] Implementar sesión, identificadores internos y controlador por sesión con comandos `SendTurn`, `Cancel` y `Close`.
-- [ ] Validar alias únicos y cwd accesible al crear la sesión.
-- [ ] Mantener historial y estado en memoria; conservar borrador y scroll por sesión cuando se agregue la UI.
-- [ ] Rechazar un segundo turno sobre una sesión ocupada; permitir que otra sesión avance en paralelo.
-- [ ] Correlacionar cada evento con sesión y turno. Cancelar una sesión no afecta a las demás.
-- [ ] Definir la recuperación tras cancelación/fallo: conservar el ID del proveedor si existe; no reintentar ni crear otra conversación silenciosamente si la reanudación falla.
-- [ ] Implementar apagado global con plazo acotado para todos los controladores.
+- [x] Implementar sesión, identificadores internos y controlador por sesión con comandos `SendTurn`, `Cancel` y `Close`.
+- [x] Validar alias únicos y cwd accesible al crear la sesión.
+- [x] Mantener historial y estado en memoria.
+- [x] Rechazar un segundo turno sobre una sesión ocupada; permitir que otra sesión avance en paralelo.
+- [x] Correlacionar cada evento con sesión y turno. Cancelar una sesión no afecta a las demás.
+- [x] Definir la recuperación tras cancelación/fallo: conservar el ID del proveedor si existe; no reintentar ni crear otra conversación silenciosamente si la reanudación falla.
+- [x] Implementar apagado global con plazo acotado para todos los controladores.
 
 **Aceptación:** pruebas offline con dos sesiones y procesos controlados verifican concurrencia, rechazo `busy`, asociación de eventos, cancelación selectiva y apagado. Una prueba real con una sesión Codex y otra agy/Gemini, de dos turnos cada una, verifica continuidad, selección de modelo y cwd en dos directorios distintos.
+
+Resultado fase 2 (2026-11-27): el smoke test `--smoke-test concurrent` completó dos turnos por proveedor con Codex 0.172.0 y agy 1.5.17 / `gemini-3.8-flash-low`. Ambas sesiones conservaron su ID y recuperaron su marcador. Se comprobó con `/proc` que los dos proveedores coincidieron en ejecución y usaron el cwd correspondiente en los cuatro lanzamientos. El historial y las notificaciones se exponen en memoria para la TUI de fase 3.
 
 ### Fase 3 — TUI mínima para iterar la ergonomía
 
@@ -244,11 +246,11 @@ Inicializar idempotentemente `~/.orch/shared/` con `mcp.json`, `memory/` y `skil
 
 ## 5. Reglas de ejecución y verificación
 
-Las reglas permanentes y los comandos de calidad están en [AGENTS.md](AGENTS.md). Umbral automatizado: 90% de cobertura de líneas de producción, además de pruebas explícitas para todos los flujos críticos. Estado tras 1C: 18 tests offline, 95,77% de líneas cubiertas (2026-11-27); ver [CI](.github/workflows/ci.yml). La medición excluye solo el código de tests, no módulos de producción.
+Las reglas permanentes y los comandos de calidad están en [AGENTS.md](AGENTS.md). Umbral automatizado: 90% de cobertura de líneas de producción, además de pruebas explícitas para todos los flujos críticos. Estado tras la fase 2: 24 tests offline, 94,90% de líneas cubiertas (2026-11-27); ver [CI](.github/workflows/ci.yml). La medición excluye solo el código de tests, no módulos de producción.
 
 
 - Completar y verificar cada fase inicial antes de avanzar; el roadmap posterior puede reordenarse según uso real. Actualizar este archivo con decisiones y resultados concretos.
-- 1A Codex, 1A-agy, 1B y 1C completadas. La fase 2 corresponde al controlador concurrente.
+- Fases 1 y 2 completadas. La fase 3 corresponde a la TUI mínima.
 - No usar `unwrap()` en producción. Errores del proveedor, eventos nuevos y stdout inválido no deben causar panic ni éxito silencioso.
 - Nunca usar `println!`/`eprintln!` con la TUI activa; usar tracing en archivo. La CLI headless sí puede imprimir eventos normalizados.
 - Dejar pruebas pequeñas y deterministas para parsing, transiciones y ciclo de vida de procesos. Usar mocks/procesos controlados donde permitan reproducir fallos; evitar suites que solo repitan la implementación.
