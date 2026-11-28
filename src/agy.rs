@@ -111,12 +111,15 @@ impl<'a> Parser<'a> {
             };
             let init = &value["init"];
             let cwd = init["cwd"].as_str().map(Path::new);
-            let model = init["model"].as_str().filter(|model| !model.is_empty());
-            if model.is_none()
-                || self.model.is_some_and(|expected| model != Some(expected))
-                || cwd != Some(self.cwd.as_path())
+            if cwd != Some(self.cwd.as_path()) {
+                return Err(protocol("agy init reported an unexpected cwd"));
+            }
+            // agy 1.5.17 can omit the model when using its configured default.
+            if self
+                .model
+                .is_some_and(|expected| init["model"].as_str() != Some(expected))
             {
-                return Err(protocol("agy init reported an unexpected model or cwd"));
+                return Err(protocol("agy init did not confirm the requested model"));
             }
             if init["permission_mode"] != "strict" {
                 return Err((
@@ -139,6 +142,17 @@ impl<'a> Parser<'a> {
                 .filter(|actions| !actions.is_empty())
             {
                 let mut message = format!("agy denied {} tool action(s)", actions.len());
+                let names = actions
+                    .iter()
+                    .filter_map(|action| action["action"].as_str())
+                    .filter(|name| !name.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if !names.is_empty() {
+                    message.push_str(" (");
+                    message.push_str(&names);
+                    message.push(')');
+                }
                 if self.delta_bytes == 0
                     && let Some(text) = payload["response"].as_str().filter(|text| !text.is_empty())
                 {

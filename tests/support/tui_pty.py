@@ -231,6 +231,11 @@ def flow(binary, root):
         recovered = requests(agy, 4, term)[3]
         assert "--conversation=tui-agy" in recovered["args"]
         term.expect(len(term.output), "Lista · reanuda")
+        term.send(b"iholi\r")
+        denied = requests(agy, 5, term)[4]
+        assert "--conversation=tui-agy" in denied["args"]
+        term.expect(len(term.output), "agy denied 1 tool action(s)", "read_file")
+
         term.expect(term.resize(40, 13), "NORMAL", "beta")
         term.expect(term.resize(10, 4), "Terminal p")
         term.expect(term.resize(100, 24), "NORMAL", "beta")

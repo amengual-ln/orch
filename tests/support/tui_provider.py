@@ -20,8 +20,10 @@ with Path("requests").open("a") as record:
     record.write(json.dumps({"args": args, "prompt": prompt, "cwd": os.getcwd(), "pid": os.getpid()}) + "\n")
 
 if agy:
-    event(event="init", conversation_id=conversation,
-          init={"model": model or "fixture-default", "cwd": os.getcwd(), "permission_mode": "strict"})
+    details = {"cwd": os.getcwd(), "permission_mode": "strict"}
+    if model is not None:
+        details["model"] = model
+    event(event="init", conversation_id=conversation, init=details)
 else:
     event(type="thread.started", thread_id=conversation)
     event(type="turn.started")
@@ -30,6 +32,14 @@ if prompt == "wait":
     deadline = time.monotonic() + 25
     while not Path("continue").exists() and time.monotonic() < deadline:
         time.sleep(.02)
+elif agy and prompt == "holi":
+    event(event="result", result={
+        "conversation_id": conversation,
+        "status": "SUCCESS",
+        "response": "",
+        "denied_actions": [{"action": "read_file", "display_name": "ReadFile"}],
+    })
+    sys.exit(0)
 elif prompt == "fail":
     if agy:
         event(event="result", result={"status": "ERROR", "error": "error de prueba"})

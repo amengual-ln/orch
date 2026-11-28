@@ -161,6 +161,7 @@ async fn protocol_permission_provider_and_exit_failures_are_terminal() {
             "0",
             "protocol",
         ),
+        (first.replace(MODEL, ""), "0", "protocol"),
         (rejected.to_owned(), "0", "permission"),
         (
             rejected.replace("\"response\":\"\"", "\"response\":\"partial response\""),
