@@ -176,6 +176,7 @@ pub struct Codex {
     pub executable: PathBuf,
     pub cwd: PathBuf,
     pub timeout: Duration,
+    pub model: Option<String>,
 }
 
 impl Codex {
@@ -188,6 +189,9 @@ impl Codex {
             command.arg("resume");
         }
         command.args(["--ignore-user-config", "--json", "--skip-git-repo-check"]);
+        if let Some(model) = &self.model {
+            command.arg(format!("--model={model}"));
+        }
         if let Some(id) = resume {
             command.arg(id);
         }

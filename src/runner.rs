@@ -93,7 +93,8 @@ pub(crate) async fn turn<P: TurnParser>(
                     },
                 };
                 result.map_err(|(kind, mut message)| {
-                    if !output.stderr.is_empty() {
+                    // The structured permission failure already carries the diagnostic.
+                    if kind != FailureKind::Permission && !output.stderr.is_empty() {
                         message.push_str("; stderr (last 16 KiB): ");
                         message.push_str(&output.stderr);
                     }

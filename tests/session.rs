@@ -33,13 +33,14 @@ fn runner(cwd: &Path, agy: bool) -> Runner {
             executable: script,
             cwd: cwd.into(),
             timeout: BOUND,
-            model: "gemini-3.8-flash-low".into(),
+            model: Some("gemini-3.8-flash-low".into()),
         })
     } else {
         Runner::Codex(Codex {
             executable: script,
             cwd: cwd.into(),
             timeout: BOUND,
+            model: None,
         })
     }
 }
@@ -134,11 +135,11 @@ async fn concurrent_sessions_cancel_selectively_and_shutdown_reaps_the_other() {
         .create("agy", runner(agy_dir.path(), true))
         .unwrap();
     assert_ne!(codex.id(), agy.id());
-    assert_eq!(codex.provider(), &Provider::Codex);
+    assert_eq!(codex.provider(), &Provider::Codex { model: None });
     assert_eq!(
         agy.provider(),
         &Provider::Agy {
-            model: "gemini-3.8-flash-low".into()
+            model: Some("gemini-3.8-flash-low".into())
         }
     );
     assert_eq!(agy.cwd(), agy_dir.path());
@@ -279,12 +280,23 @@ async fn validates_alias_cwd_model_and_prompt_before_accepting_a_turn() {
     let session = sessions.create(" one ", runner(dir.path(), false)).unwrap();
     assert_eq!(session.alias(), "one");
     assert!(sessions.create("one", runner(dir.path(), false)).is_err());
-    assert!(sessions.create(" ", runner(dir.path(), false)).is_err());
+    let first = sessions.create(" ", runner(dir.path(), false)).unwrap();
+    let second = sessions.create("", runner(dir.path(), false)).unwrap();
+    let prefix = format!(
+        "{}-codex-",
+        dir.path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .replace('.', "-")
+    );
+    assert!(first.alias().starts_with(&prefix));
+    assert_ne!(first.alias(), second.alias());
     let mut invalid = Agy {
         executable: "agy".into(),
         cwd: dir.path().to_path_buf(),
         timeout: BOUND,
-        model: " ".into(),
+        model: Some(" ".into()),
     };
     assert!(
         sessions
@@ -295,7 +307,7 @@ async fn validates_alias_cwd_model_and_prompt_before_accepting_a_turn() {
         executable: "agy".into(),
         cwd: dir.path().join("missing"),
         timeout: BOUND,
-        model: "fake-model".into(),
+        model: Some("fake-model".into()),
     };
     assert!(
         sessions
@@ -369,7 +381,7 @@ async fn cli_concurrent_smoke_reports_two_correlated_conversations() {
             "--timeout-secs",
             "3",
             "--model",
-            &a.model,
+            a.model.as_deref().unwrap(),
             "--cwd",
         ])
         .arg(&c.cwd)

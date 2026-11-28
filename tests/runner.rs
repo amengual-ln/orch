@@ -93,6 +93,7 @@ async fn failures_emit_exactly_one_terminal_and_no_false_success() {
             executable,
             cwd,
             timeout: Duration::from_secs(1),
+            model: None,
         };
         let (_sender, mut cancel) = watch::channel(false);
         let mut events = Vec::new();
@@ -251,6 +252,7 @@ async fn a_failing_event_consumer_cannot_produce_a_successful_turn() {
         executable: executable(dir.path()),
         cwd: dir.path().to_path_buf(),
         timeout: Duration::from_secs(2),
+        model: None,
     };
     let (_sender, mut cancel) = watch::channel(false);
     let mut events = Vec::new();

@@ -9,6 +9,7 @@ use tokio::{process::Command, sync::watch};
 
 use crate::{
     events::{AgentEvent, FailureKind},
+    process::{self, Stop},
     runner::{self, TurnFailure, TurnParser, TurnResult},
 };
 
@@ -18,29 +19,71 @@ pub struct Agy {
     pub executable: PathBuf,
     pub cwd: PathBuf,
     pub timeout: Duration,
-    pub model: String,
+    pub model: Option<String>,
 }
 
 impl Agy {
     pub fn command(&self, prompt: &str, resume: Option<&str>) -> Command {
         let mut command = Command::new(&self.executable);
-        command
-            .current_dir(&self.cwd)
-            .arg(format!("--model={}", self.model))
-            .args([
-                "--mode",
-                "plan",
-                "--sandbox",
-                "--settings",
-                r#"{"toolPermission":"strict"}"#,
-                "--output-format",
-                "stream-json",
-            ]);
+        command.current_dir(&self.cwd);
+        if let Some(model) = &self.model {
+            command.arg(format!("--model={model}"));
+        }
+        command.args([
+            "--mode",
+            "plan",
+            "--sandbox",
+            "--settings",
+            r#"{"toolPermission":"strict"}"#,
+            "--output-format",
+            "stream-json",
+        ]);
         if let Some(id) = resume {
             command.arg(format!("--conversation={id}"));
         }
         command.arg(format!("--print={prompt}"));
         command
+    }
+
+    /// Query a conversation's model through the headless /model command.
+    pub async fn reported_model(
+        &self,
+        conversation: &str,
+        cancel: &mut watch::Receiver<bool>,
+    ) -> Option<String> {
+        let mut command = self.command("/model", Some(conversation));
+        let mut reported = None;
+        let mut succeeded = false;
+        let output = process::run(
+            &mut command,
+            self.timeout.min(Duration::from_secs(10)),
+            cancel,
+            |line| {
+                let Ok(event) = serde_json::from_slice::<Value>(line) else {
+                    return Ok(());
+                };
+                match event["event"].as_str() {
+                    Some("command_result") if event["command"]["name"] == "model" => {
+                        let data = &event["command"]["data"];
+                        reported = data["label"]
+                            .as_str()
+                            .or_else(|| data["id"].as_str())
+                            .filter(|label| !label.is_empty() && label.len() <= 128)
+                            .map(str::to_owned);
+                    }
+                    Some("result") => succeeded = event["result"]["status"] == "SUCCESS",
+                    _ => {}
+                }
+                Ok(())
+            },
+        )
+        .await
+        .ok()?;
+        if succeeded && matches!(output.stop, Stop::Exited) && output.status.success() {
+            reported
+        } else {
+            None
+        }
     }
 
     pub async fn turn(
@@ -57,7 +100,7 @@ impl Agy {
             |cwd| {
                 let mut command = self.command(prompt, resume);
                 command.current_dir(&cwd);
-                (command, Parser::new(&self.model, cwd, resume))
+                (command, Parser::new(self.model.as_deref(), cwd, resume))
             },
             resume,
             emit,
@@ -67,7 +110,7 @@ impl Agy {
 }
 
 struct Parser<'a> {
-    model: &'a str,
+    model: Option<&'a str>,
     cwd: PathBuf,
     resume: Option<&'a str>,
     id: Option<String>,
@@ -77,7 +120,7 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn new(model: &'a str, cwd: PathBuf, resume: Option<&'a str>) -> Self {
+    fn new(model: Option<&'a str>, cwd: PathBuf, resume: Option<&'a str>) -> Self {
         Self {
             model,
             cwd,
@@ -110,8 +153,15 @@ impl<'a> Parser<'a> {
             };
             let init = &value["init"];
             let cwd = init["cwd"].as_str().map(Path::new);
-            if init["model"] != self.model || cwd != Some(self.cwd.as_path()) {
-                return Err(protocol("agy init reported an unexpected model or cwd"));
+            if cwd != Some(self.cwd.as_path()) {
+                return Err(protocol("agy init reported an unexpected cwd"));
+            }
+            // agy 1.5.17 can omit the model when using its configured default.
+            if self
+                .model
+                .is_some_and(|expected| init["model"].as_str() != Some(expected))
+            {
+                return Err(protocol("agy init did not confirm the requested model"));
             }
             if init["permission_mode"] != "strict" {
                 return Err((
@@ -134,6 +184,18 @@ impl<'a> Parser<'a> {
                 .filter(|actions| !actions.is_empty())
             {
                 let mut message = format!("agy denied {} tool action(s)", actions.len());
+                let names = actions
+                    .iter()
+                    .filter_map(|action| action["action"].as_str())
+                    .filter(|name| !name.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if !names.is_empty() {
+                    message.push_str(" (");
+                    message.push_str(&names);
+                    message.push(')');
+                }
+                message.push_str(". Headless mode cannot request approval.");
                 if self.delta_bytes == 0
                     && let Some(text) = payload["response"].as_str().filter(|text| !text.is_empty())
                 {

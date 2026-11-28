@@ -1,6 +1,7 @@
 //! In-memory sessions. Each controller owns one runner and at most one active turn.
 use std::{
     fmt,
+    hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -33,13 +34,14 @@ pub enum Runner {
 
 impl Runner {
     fn validate(&mut self) -> Result<()> {
-        let cwd = match self {
-            Self::Codex(runner) => &mut runner.cwd,
-            Self::Agy(runner) => {
-                ensure!(!runner.model.trim().is_empty(), "agy requires a model");
-                &mut runner.cwd
-            }
+        let (cwd, model) = match self {
+            Self::Codex(runner) => (&mut runner.cwd, &runner.model),
+            Self::Agy(runner) => (&mut runner.cwd, &runner.model),
         };
+        ensure!(
+            model.as_ref().is_none_or(|model| !model.trim().is_empty()),
+            "session model must be nonempty when specified"
+        );
         *cwd = validate_cwd(cwd)?;
         Ok(())
     }
@@ -122,8 +124,8 @@ enum Command {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Provider {
-    Codex,
-    Agy { model: String },
+    Codex { model: Option<String> },
+    Agy { model: Option<String> },
 }
 
 #[derive(Clone)]
@@ -157,6 +159,11 @@ impl Session {
     /// Read state synchronously. The callback must finish before the controller can write.
     pub fn inspect<T>(&self, read: impl FnOnce(&Snapshot) -> T) -> T {
         read(&self.state.borrow())
+    }
+
+    /// Coalesce updates for a polling view while keeping the complete history.
+    pub fn take_update(&mut self) -> bool {
+        self.state.borrow_and_update().has_changed()
     }
 
     pub async fn changed(&mut self) -> Result<(), CommandError> {
@@ -204,16 +211,25 @@ pub struct Sessions {
 
 impl Sessions {
     pub fn create(&mut self, alias: &str, mut runner: Runner) -> Result<Session> {
-        let alias = alias.trim();
-        ensure!(!alias.is_empty(), "session alias is empty");
-        ensure!(
-            !self
-                .entries
-                .iter()
-                .any(|(session, _)| session.alias() == alias),
-            "session alias already exists: {alias}"
-        );
         runner.validate()?;
+        let provider = match &runner {
+            Runner::Codex(runner) => Provider::Codex {
+                model: runner.model.clone(),
+            },
+            Runner::Agy(runner) => Provider::Agy {
+                model: runner.model.clone(),
+            },
+        };
+        let alias = alias.trim();
+        let alias = if alias.is_empty() {
+            self.make_alias(runner.cwd(), &provider)
+        } else {
+            ensure!(
+                self.alias_available(alias),
+                "session alias already exists: {alias}"
+            );
+            alias.to_owned()
+        };
         let runtime = tokio::runtime::Handle::try_current()?;
         let (commands, inbox) = mpsc::channel(8);
         let (close, close_rx) = watch::channel(false);
@@ -225,14 +241,9 @@ impl Sessions {
         });
         let session = Session {
             id: format!("session-{}", self.entries.len() + 1),
-            alias: alias.into(),
+            alias,
             cwd: runner.cwd().to_path_buf(),
-            provider: match &runner {
-                Runner::Codex(_) => Provider::Codex,
-                Runner::Agy(runner) => Provider::Agy {
-                    model: runner.model.clone(),
-                },
-            },
+            provider,
             commands,
             close,
             state,
@@ -240,6 +251,43 @@ impl Sessions {
         let task = runtime.spawn(control(runner, inbox, close_rx, ControllerState(state_tx)));
         self.entries.push((session.clone(), task));
         Ok(session)
+    }
+
+    fn alias_available(&self, alias: &str) -> bool {
+        self.entries
+            .iter()
+            .all(|(session, _)| session.alias() != alias)
+    }
+
+    fn make_alias(&self, cwd: &Path, provider: &Provider) -> String {
+        let project = cwd
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("proyecto");
+        let project: String = project
+            .chars()
+            .map(|ch| {
+                if ch.is_alphanumeric() || matches!(ch, '-' | '_') {
+                    ch
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        let (name, model) = match provider {
+            Provider::Codex { model } => ("codex", model),
+            Provider::Agy { model } => ("agy", model),
+        };
+        let mut salt = self.entries.len();
+        loop {
+            let mut hash = DefaultHasher::new();
+            (cwd, name, model, salt).hash(&mut hash);
+            let alias = format!("{project}-{name}-{:08x}", hash.finish() as u32);
+            if self.alias_available(&alias) {
+                return alias;
+            }
+            salt += 1;
+        }
     }
 
     /// Signal all controllers at once, then wait under a single deadline.

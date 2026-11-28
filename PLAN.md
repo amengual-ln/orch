@@ -84,6 +84,11 @@ Decisión inicial: un proceso por turno en ambos runners; agy reanuda con `--con
 - Los smoke tests iniciales son de solo lectura. Antes de habilitar ediciones, definir y verificar una política explícita de sandbox/permisos para lanzamiento y reanudación; no asumir que ambos aceptan las mismas opciones.
 - En el MVP headless no habrá un diálogo de aprobaciones propio: usar una política no interactiva soportada por el proveedor que rechace lo no autorizado y mostrar ese rechazo como fallo accionable. No activar bypass de permisos para hacer pasar una prueba. Si una versión no permite esta política, documentar la limitación antes de habilitar ediciones.
 
+### Deuda técnica de acceso a archivos y recursos compartidos
+
+- [ ] Habilitar y verificar por proveedor la lectura de archivos dentro del proyecto elegido para cada sesión, tanto al iniciarla como al reanudarla. La política debe acotar las rutas al proyecto, contemplar symlinks y mantener permisos separados para escritura y ejecución de comandos. La regresión de agy debe cubrir la lectura de `PLAN.md`, que hoy se deniega en modo estricto.
+- [ ] Dar a los agentes acceso al contexto, las skills y la configuración compartida que corresponda a su sesión. Definir qué recursos puede consultar cada agente, cómo se entregan y qué precedencia tiene la configuración del proyecto. Verificar el acceso al iniciar y al reanudar en cada proveedor, junto con las integraciones de las fases 5 y 6.
+
 ## 3. Fases iniciales
 
 ### Fase 1 — Pruebas verticales headless: Codex y agy/Gemini
@@ -167,30 +172,30 @@ Resultado fase 2 (2026-11-27): el smoke test `--smoke-test concurrent` completó
 
 Objetivo: completar el flujo diario básico desde el teclado con Codex y agy/Gemini.
 
-- [ ] Agregar `ratatui` y `crossterm`; integrar teclado y eventos de sesiones sin bloquear el renderizado ni la entrada.
-- [ ] Layout inicial: lista de sesiones a la izquierda, conversación e input a la derecha, barra de estado con modo, estado y atajos. Mostrar alias, proveedor y cwd; ajustar el layout ante resize y terminales pequeñas.
-- [ ] Implementar modos `NORMAL` e `INSERT` y un modal de creación de sesión.
-- [ ] Conservar borrador y posición de scroll al alternar sesiones. Seguir la salida nueva solo si el usuario está al final del historial.
-- [ ] Mostrar errores y cancelaciones en la conversación; mantener accesible el input para recuperación.
-- [ ] Manejar raw mode y pantalla alternativa mediante una guarda de restauración, incluso ante inicialización parcial, errores y panic. Apagar procesos mediante la ruta común de cierre.
+- [x] Agregar `ratatui` y `crossterm`; integrar teclado y eventos de sesiones sin bloquear el renderizado ni la entrada.
+- [x] Layout inicial: lista de sesiones a la izquierda, conversación e input a la derecha, barra de estado con atajos y un indicador de respuesta activa. Mostrar alias, proveedor y cwd; ajustar el layout ante resize y terminales pequeñas.
+- [x] Mantener el campo de mensaje listo para escribir y un modal de creación de sesión.
+- [x] Conservar borrador y posición de scroll al alternar sesiones. Seguir la salida nueva solo si el usuario está al final del historial.
+- [x] Diferenciar los mensajes por el fondo y mostrar errores y cancelaciones en la conversación; mantener accesible el input para recuperación.
+- [x] Manejar raw mode y pantalla alternativa mediante una guarda de restauración, incluso ante inicialización parcial, errores y panic. Apagar procesos mediante la ruta común de cierre.
 
 Atajos del MVP:
 
 | Tecla | Acción |
 | --- | --- |
-| `i` o `Enter` en NORMAL | Entrar a INSERT |
-| `Enter` en INSERT | Enviar turno; conservar el borrador si la sesión devuelve `busy` |
-| `Ctrl+j` en INSERT | Insertar salto de línea sin depender de Shift+Enter |
-| `Esc` en INSERT | Volver a NORMAL |
-| `Esc` en NORMAL | Cancelar el turno activo, si existe |
-| `j` / `k` o flechas en NORMAL | Cambiar sesión |
-| `Ctrl+d` / `Ctrl+u` en NORMAL | Desplazar historial |
-| `Ctrl+n` | Crear sesión: elegir Codex/agy, modelo opcional, alias y cwd; inicialmente el cwd de arranque |
-| `q` en NORMAL | Salir y apagar todas las sesiones |
+| `Enter` | Enviar el mensaje. Si la sesión está ocupada, el borrador se conserva |
+| `Shift+Enter` o `Ctrl+j` | Insertar un salto de línea |
+| `Alt+↑` / `Alt+↓` | Cambiar de sesión y conservar el borrador y el scroll |
+| `PgUp` / `PgDn` | Desplazar el historial |
+| `Esc` | Cancelar el turno activo de esa sesión |
+| `Ctrl+n` | Crear una sesión |
+| `Alt+q` o `Ctrl+c` | Cerrar Orch y restaurar la terminal |
 
-En el modal, `Tab` cambia de campo, `Enter` confirma y `Esc` cierra. Un cwd inválido mantiene abierto el modal con el error y los valores ingresados.
+En el modal, `↑/↓` o `Tab` cambian de campo, `Enter` confirma y `Esc` cierra. Un alias vacío genera uno a partir del directorio y el proveedor, con un sufijo que incorpora el modelo solicitado. Un cwd inválido mantiene abierto el modal con el error y los valores ingresados.
 
 **Aceptación:** crear dos sesiones con distintos cwd, enviar y reanudar turnos, alternar conservando borradores/scroll y cancelar una generación, todo sin mouse. La otra sesión sigue operativa. Verificar resize, salida de orch y fallo de inicialización parcial: no quedan procesos controlados ni modos de terminal activos. La TUI nunca imprime logs en pantalla.
+
+El 27 de noviembre de 2026 una prueba real de la TUI creó por teclado dos sesiones con Codex 0.172.0 y agy 1.5.17 / `gemini-3.8-flash-low`. Los dos proveedores recuperaron su marcador en el segundo turno. Se verificaron los cwd y la recolección de los hijos directos mediante `/proc`. Las pruebas offline en pseudoterminal verifican navegación, borradores, scroll, cancelación selectiva, resize, salida por teclado y restauración de termios ante una inicialización parcial.
 
 **Punto de revisión:** usar este flujo en repositorios reales y ajustar teclas, legibilidad y estados antes de sumar infraestructura. No es necesario completar todo el roadmap para empezar a usar orch.
 
@@ -239,18 +244,18 @@ Inicializar idempotentemente `~/.orch/shared/` con `mcp.json`, `memory/` y `skil
 ### Fase 7 — Mejoras de interacción y visuales
 
 - `Ctrl+k`: command palette fuzzy para crear/cerrar sesiones, exportar Markdown y limpiar historial, con semántica explícita respecto de persistencia y conversación del proveedor.
-- Kitty Keyboard Protocol con detección y fallback: Shift+Enter para salto de línea cuando pueda distinguirse; mantener `Ctrl+j` como alternativa. Distinguir y reservar Ctrl+Enter sin imponer todavía una acción configurable.
+- La fase 3 incorporó detección del protocolo de teclado Kitty para `Shift+Enter`, con `Ctrl+j` como alternativa. `Ctrl+Enter` queda reservado.
 - Balancear `PushKeyboardEnhancementFlags`/`PopKeyboardEnhancementFlags` incluso ante errores y mantener el arranque operativo si la detección falla.
 - Mejorar bloques de código y presentación según el uso real.
 - Imágenes opcionales con `ratatui-image`: detectar gráficos Kitty por separado del protocolo de teclado, respetar scroll/layout y mostrar referencia textual cuando no haya soporte.
 
 ## 5. Reglas de ejecución y verificación
 
-Las reglas permanentes y los comandos de calidad están en [AGENTS.md](AGENTS.md). Umbral automatizado: 90% de cobertura de líneas de producción, además de pruebas explícitas para todos los flujos críticos. Estado tras la fase 2: 24 tests offline, 94,90% de líneas cubiertas (2026-11-27); ver [CI](.github/workflows/ci.yml). La medición excluye solo el código de tests, no módulos de producción.
+Las reglas permanentes y los comandos de calidad están en [AGENTS.md](AGENTS.md). Umbral automatizado: 90% de cobertura de líneas de producción, además de pruebas explícitas para todos los flujos críticos. Estado tras la fase 3: 28 tests offline, 94,75% de líneas cubiertas (2026-11-28); ver [CI](.github/workflows/ci.yml). La medición excluye solo el código de tests, no módulos de producción.
 
 
 - Completar y verificar cada fase inicial antes de avanzar; el roadmap posterior puede reordenarse según uso real. Actualizar este archivo con decisiones y resultados concretos.
-- Fases 1 y 2 completadas. La fase 3 corresponde a la TUI mínima.
+- Fases 1, 2 y 3 completadas. La fase 4 corresponde a persistencia, configuración y Claude.
 - No usar `unwrap()` en producción. Errores del proveedor, eventos nuevos y stdout inválido no deben causar panic ni éxito silencioso.
 - Nunca usar `println!`/`eprintln!` con la TUI activa; usar tracing en archivo. La CLI headless sí puede imprimir eventos normalizados.
 - Dejar pruebas pequeñas y deterministas para parsing, transiciones y ciclo de vida de procesos. Usar mocks/procesos controlados donde permitan reproducir fallos; evitar suites que solo repitan la implementación.
